@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Redirect } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -14,9 +14,12 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, FirebaseRecaptchaVerifierModal } from "@/lib/auth-context";
+import { firebaseConfig } from "@/lib/firebase";
 
 type Mode = "sign-in" | "sign-up";
+type Method = "email" | "phone";
+const RESEND_SECONDS = 60;
 
 function firebaseErrorMessage(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
@@ -31,23 +34,83 @@ function firebaseErrorMessage(err: unknown): string {
       return "Password must be at least 6 characters.";
     case "auth/invalid-email":
       return "Please enter a valid email address.";
+    case "auth/invalid-phone-number":
+      return "Please enter a valid phone number, including country code (e.g. +1...).";
+    case "auth/invalid-verification-code":
+      return "That code is incorrect. Please try again.";
+    case "auth/code-expired":
+      return "That code has expired. Please request a new one.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Please try again later.";
     default:
       return "Something went wrong. Please try again.";
   }
 }
 
+function useResendTimer() {
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  useEffect(() => {
+    if (secondsLeft <= 0) return;
+    const id = setInterval(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearInterval(id);
+  }, [secondsLeft]);
+  return { secondsLeft, start: () => setSecondsLeft(RESEND_SECONDS) };
+}
+
+function PasswordField({
+  value,
+  onChangeText,
+  colors,
+}: {
+  value: string;
+  onChangeText: (v: string) => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <View style={{ position: "relative" }}>
+      <TextInput
+        style={[
+          styles.input,
+          { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground, paddingRight: 46 },
+        ]}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="Password"
+        placeholderTextColor={colors.mutedForeground}
+        secureTextEntry={!visible}
+      />
+      <Pressable
+        onPress={() => setVisible((v) => !v)}
+        hitSlop={12}
+        style={{ position: "absolute", right: 16, top: 0, bottom: 0, justifyContent: "center" }}
+      >
+        <Ionicons name={visible ? "eye-off-outline" : "eye-outline"} size={20} color={colors.mutedForeground} />
+      </Pressable>
+    </View>
+  );
+}
+
 export default function SignInScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { isSignedIn, signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth();
+  const { isSignedIn, signInWithGoogle, signInWithEmail, signUpWithEmail, sendPhoneOtp, confirmPhoneOtp } = useAuth();
+  const recaptchaVerifier = useRef<any>(null);
 
   const [mode, setMode] = useState<Mode>("sign-in");
+  const [method, setMethod] = useState<Method>("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [verificationId, setVerificationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<"google" | "email" | null>(null);
+  const [loading, setLoading] = useState<"google" | "email" | "send" | "verify" | null>(null);
+  const { secondsLeft, start } = useResendTimer();
 
   if (isSignedIn) return <Redirect href="/" />;
+
+  const busy = loading !== null;
 
   const handleGoogle = async () => {
     setError(null);
@@ -77,10 +140,38 @@ export default function SignInScreen() {
     }
   };
 
-  const busy = loading !== null;
+  const handleSendCode = async () => {
+    setError(null);
+    setLoading("send");
+    try {
+      const id = await sendPhoneOtp(phone, recaptchaVerifier.current);
+      setVerificationId(id);
+      start();
+    } catch (err) {
+      setError(firebaseErrorMessage(err));
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    if (!verificationId) return;
+    setError(null);
+    setLoading("verify");
+    try {
+      await confirmPhoneOtp(verificationId, code);
+    } catch (err) {
+      setError(firebaseErrorMessage(err));
+    } finally {
+      setLoading(null);
+    }
+  };
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      {FirebaseRecaptchaVerifierModal && (
+        <FirebaseRecaptchaVerifierModal ref={recaptchaVerifier} firebaseConfig={firebaseConfig} />
+      )}
       <LinearGradient
         colors={["rgba(136,77,255,0.14)", colors.background]}
         start={{ x: 0.5, y: 0 }}
@@ -138,57 +229,133 @@ export default function SignInScreen() {
             <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
           </View>
 
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
-            value={email}
-            onChangeText={setEmail}
-            placeholder="Email address"
-            placeholderTextColor={colors.mutedForeground}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Password"
-            placeholderTextColor={colors.mutedForeground}
-            secureTextEntry
-          />
-          {error && <Text style={styles.error}>{error}</Text>}
-
-          <Pressable onPress={handleEmailSubmit} disabled={busy || !email || !password}>
-            <LinearGradient
-              colors={["#884dff", "#7c3aed"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={[styles.primaryBtn, (busy || !email || !password) && { opacity: 0.6 }]}
-            >
-              {loading === "email" ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.primaryBtnText}>
-                  {mode === "sign-in" ? "Sign In" : "Create Account"}
+          <View style={[styles.methodTabs, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            {(["email", "phone"] as const).map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => {
+                  setError(null);
+                  setMethod(m);
+                }}
+                style={[styles.methodTab, method === m && { backgroundColor: colors.primary }]}
+              >
+                <Text
+                  style={[
+                    styles.methodTabText,
+                    { color: method === m ? "#fff" : colors.mutedForeground },
+                  ]}
+                >
+                  {m === "email" ? "Email" : "Phone"}
                 </Text>
-              )}
-            </LinearGradient>
-          </Pressable>
-
-          <View style={styles.switchRow}>
-            <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>
-              {mode === "sign-in" ? "Don't have an account?" : "Already have an account?"}
-            </Text>
-            <Pressable
-              onPress={() => {
-                setError(null);
-                setMode(mode === "sign-in" ? "sign-up" : "sign-in");
-              }}
-            >
-              <Text style={[styles.linkText, { color: colors.primary }]}>
-                {mode === "sign-in" ? "Sign up" : "Sign in"}
-              </Text>
-            </Pressable>
+              </Pressable>
+            ))}
           </View>
+
+          {method === "email" ? (
+            <>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
+                value={email}
+                onChangeText={setEmail}
+                placeholder="Email address"
+                placeholderTextColor={colors.mutedForeground}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+              <PasswordField value={password} onChangeText={setPassword} colors={colors} />
+              {error && <Text style={styles.error}>{error}</Text>}
+
+              <Pressable onPress={handleEmailSubmit} disabled={busy || !email || !password}>
+                <LinearGradient
+                  colors={["#884dff", "#7c3aed"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={[styles.primaryBtn, (busy || !email || !password) && { opacity: 0.6 }]}
+                >
+                  {loading === "email" ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryBtnText}>
+                      {mode === "sign-in" ? "Sign In" : "Create Account"}
+                    </Text>
+                  )}
+                </LinearGradient>
+              </Pressable>
+
+              <View style={styles.switchRow}>
+                <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>
+                  {mode === "sign-in" ? "Don't have an account?" : "Already have an account?"}
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    setError(null);
+                    setMode(mode === "sign-in" ? "sign-up" : "sign-in");
+                  }}
+                >
+                  <Text style={[styles.linkText, { color: colors.primary }]}>
+                    {mode === "sign-in" ? "Sign up" : "Sign in"}
+                  </Text>
+                </Pressable>
+              </View>
+            </>
+          ) : !verificationId ? (
+            <>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="+1 555 123 4567"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="phone-pad"
+              />
+              {error && <Text style={styles.error}>{error}</Text>}
+              <Pressable onPress={handleSendCode} disabled={busy || !phone}>
+                <LinearGradient
+                  colors={["#884dff", "#7c3aed"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={[styles.primaryBtn, (busy || !phone) && { opacity: 0.6 }]}
+                >
+                  {loading === "send" ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryBtnText}>Send code</Text>
+                  )}
+                </LinearGradient>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground, letterSpacing: 4 }]}
+                value={code}
+                onChangeText={setCode}
+                placeholder="123456"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="number-pad"
+              />
+              {error && <Text style={styles.error}>{error}</Text>}
+              <Pressable onPress={handleVerifyCode} disabled={busy || !code}>
+                <LinearGradient
+                  colors={["#884dff", "#7c3aed"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={[styles.primaryBtn, (busy || !code) && { opacity: 0.6 }]}
+                >
+                  {loading === "verify" ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryBtnText}>Verify & continue</Text>
+                  )}
+                </LinearGradient>
+              </Pressable>
+              <Pressable onPress={handleSendCode} disabled={secondsLeft > 0 || busy} style={{ alignItems: "center", marginTop: 4 }}>
+                <Text style={[styles.linkText, secondsLeft > 0 && { color: colors.mutedForeground }, secondsLeft <= 0 && { color: colors.primary }]}>
+                  {secondsLeft > 0 ? `Resend code in ${secondsLeft}s` : "Resend code"}
+                </Text>
+              </Pressable>
+            </>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -222,6 +389,20 @@ const styles = StyleSheet.create({
   dividerRow: { flexDirection: "row", alignItems: "center", gap: 12, marginVertical: 4 },
   dividerLine: { flex: 1, height: StyleSheet.hairlineWidth },
   dividerText: { fontSize: 13 },
+  methodTabs: {
+    flexDirection: "row",
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 4,
+    marginBottom: 4,
+  },
+  methodTab: {
+    flex: 1,
+    borderRadius: 9,
+    paddingVertical: 9,
+    alignItems: "center",
+  },
+  methodTabText: { fontSize: 14, fontWeight: "600" },
   input: {
     borderWidth: 1,
     borderRadius: 14,

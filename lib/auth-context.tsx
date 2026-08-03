@@ -7,10 +7,19 @@ import {
   createUserWithEmailAndPassword,
   signOut as firebaseSignOut,
   GoogleAuthProvider,
+  PhoneAuthProvider,
   User,
 } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { setAuthTokenGetter } from "@/lib/api-client";
+
+let FirebaseRecaptchaVerifierModal: any = null;
+if (Platform.OS !== "web") {
+  try {
+    FirebaseRecaptchaVerifierModal = require("expo-firebase-recaptcha").FirebaseRecaptchaVerifierModal;
+  } catch {}
+}
+export { FirebaseRecaptchaVerifierModal };
 
 let GoogleSignin: any = null;
 if (Platform.OS !== "web") {
@@ -29,6 +38,8 @@ type AuthContextValue = {
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
+  sendPhoneOtp: (phoneNumber: string, recaptchaVerifier: any) => Promise<string>;
+  confirmPhoneOtp: (verificationId: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -65,6 +76,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     signUpWithEmail: async (email, password) => {
       await createUserWithEmailAndPassword(auth, email, password);
+    },
+    sendPhoneOtp: async (phoneNumber, recaptchaVerifier) => {
+      const phoneProvider = new PhoneAuthProvider(auth);
+      return phoneProvider.verifyPhoneNumber(phoneNumber, recaptchaVerifier);
+    },
+    confirmPhoneOtp: async (verificationId, code) => {
+      const credential = PhoneAuthProvider.credential(verificationId, code);
+      await signInWithCredential(auth, credential);
     },
     signOut: async () => {
       if (GoogleSignin) {

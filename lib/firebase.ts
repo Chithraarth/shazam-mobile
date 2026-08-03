@@ -2,7 +2,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { initializeAuth, getReactNativePersistence } from "firebase/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyB1JAA9NKj2q3vtsAI5OgsCOAMh91GHKks",
   authDomain: "videofy-e5106.firebaseapp.com",
   projectId: "videofy-e5106",
