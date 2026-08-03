@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "816984918533",
+    "project_id": "videofy-e5106",
+    "storage_bucket": "videofy-e5106.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:816984918533:android:04ebb21c665813690f2a6c",
+        "android_client_info": {
+          "package_name": "com.videofy.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "816984918533-j0bd7p6en1le1ki4j971hrbsjqtfiusp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNaSUUlOxGwyJH7n20nLDcHvXPoiHqPgU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "816984918533-j0bd7p6en1le1ki4j971hrbsjqtfiusp.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

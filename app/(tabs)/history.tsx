@@ -13,7 +13,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useUser } from "@clerk/expo";
+import { useAuth } from "@/lib/auth-context";
 import { useColors } from "@/hooks/useColors";
 
 export function historyKeyFor(userId: string | null | undefined) {
@@ -134,8 +134,8 @@ function StatsBar({ total, found }: { total: number; found: number }) {
 export default function HistoryScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { user } = useUser();
-  const historyKey = historyKeyFor(user?.id);
+  const { user } = useAuth();
+  const historyKey = historyKeyFor(user?.uid);
   const [history, setHistory] = useState<LocalHistoryItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 

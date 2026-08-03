@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useClerk, useUser } from "@clerk/expo";
+import { useAuth } from "@/lib/auth-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
@@ -41,8 +41,7 @@ export default function AccountScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { signOut } = useClerk();
-  const { user } = useUser();
+  const { signOut, user } = useAuth();
   const { data: profile } = useProfile();
   const [stats, setStats] = useState({ total: 0, found: 0 });
 
@@ -52,7 +51,7 @@ export default function AccountScreen() {
     useCallback(() => {
       (async () => {
         try {
-          const raw = await AsyncStorage.getItem(historyKeyFor(user?.id));
+          const raw = await AsyncStorage.getItem(historyKeyFor(user?.uid));
           const data: LocalHistoryItem[] = raw ? JSON.parse(raw) : [];
           setStats({
             total: data.length,
@@ -62,7 +61,7 @@ export default function AccountScreen() {
           /* ignore */
         }
       })();
-    }, [user?.id])
+    }, [user?.uid])
   );
 
   const handleSignOut = async () => {

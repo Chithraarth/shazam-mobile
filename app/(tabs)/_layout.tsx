@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/expo";
+import { useAuth } from "@/lib/auth-context";
 import { BlurView } from "expo-blur";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { Redirect, Tabs } from "expo-router";

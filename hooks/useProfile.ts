@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/expo";
+import { useAuth } from "@/lib/auth-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 
@@ -18,10 +18,10 @@ export type Profile = {
 };
 
 export function useAuthedFetch() {
-  const { getToken } = useAuth();
+  const { user } = useAuth();
   return useCallback(
     async (path: string, init?: RequestInit) => {
-      const token = await getToken();
+      const token = await user?.getIdToken();
       return fetch(`${apiBase()}${path}`, {
         ...init,
         headers: {
@@ -31,7 +31,7 @@ export function useAuthedFetch() {
         },
       });
     },
-    [getToken]
+    [user]
   );
 }
 

@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/expo";
+import { useAuth } from "@/lib/auth-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";

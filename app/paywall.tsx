@@ -1,4 +1,4 @@
-import { useAuth, useClerk } from "@clerk/expo";
+import { useAuth } from "@/lib/auth-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
@@ -22,8 +22,7 @@ export default function PaywallScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { isSignedIn } = useAuth();
-  const { signOut } = useClerk();
+  const { isSignedIn, signOut } = useAuth();
   const authedFetch = useAuthedFetch();
   const { data: profile, refetch, isRefetching } = useProfile();
 

@@ -1,10 +1,7 @@
-import { useAuth, useSignIn, useSignUp, useSSO } from "@clerk/expo";
 import { Ionicons } from "@expo/vector-icons";
-import * as AuthSession from "expo-auth-session";
 import { LinearGradient } from "expo-linear-gradient";
-import { Redirect, useRouter } from "expo-router";
-import * as WebBrowser from "expo-web-browser";
-import React, { useCallback, useEffect, useState } from "react";
+import { Redirect } from "expo-router";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -17,122 +14,70 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
-
-WebBrowser.maybeCompleteAuthSession();
-
-function useWarmUpBrowser() {
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-    void WebBrowser.warmUpAsync();
-    return () => {
-      void WebBrowser.coolDownAsync();
-    };
-  }, []);
-}
+import { useAuth } from "@/lib/auth-context";
 
 type Mode = "sign-in" | "sign-up";
 
+function firebaseErrorMessage(err: unknown): string {
+  const code = (err as { code?: string })?.code ?? "";
+  switch (code) {
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "Incorrect email or password.";
+    case "auth/email-already-in-use":
+      return "An account already exists with this email.";
+    case "auth/weak-password":
+      return "Password must be at least 6 characters.";
+    case "auth/invalid-email":
+      return "Please enter a valid email address.";
+    default:
+      return "Something went wrong. Please try again.";
+  }
+}
+
 export default function SignInScreen() {
-  useWarmUpBrowser();
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const { isSignedIn } = useAuth();
-  const { startSSOFlow } = useSSO();
-  const { signIn, errors: signInErrors, fetchStatus: signInStatus } = useSignIn();
-  const { signUp, errors: signUpErrors, fetchStatus: signUpStatus } = useSignUp();
+  const { isSignedIn, signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth();
 
   const [mode, setMode] = useState<Mode>("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [ssoLoading, setSsoLoading] = useState<string | null>(null);
-
-  const busy = signInStatus === "fetching" || signUpStatus === "fetching";
-
-  const handleSSO = useCallback(
-    async (strategy: "oauth_google" | "oauth_apple") => {
-      setFormError(null);
-      setSsoLoading(strategy);
-      try {
-        const { createdSessionId, setActive } = await startSSOFlow({
-          strategy,
-          redirectUrl: AuthSession.makeRedirectUri(),
-        });
-        if (createdSessionId && setActive) {
-          await setActive({
-            session: createdSessionId,
-            navigate: async ({ session }) => {
-              if (session?.currentTask) return;
-              router.replace("/");
-            },
-          });
-        }
-      } catch {
-        setFormError("Sign-in was cancelled or failed. Please try again.");
-      } finally {
-        setSsoLoading(null);
-      }
-    },
-    [startSSOFlow, router]
-  );
-
-  const handleEmailSubmit = async () => {
-    setFormError(null);
-    if (mode === "sign-in") {
-      const { error } = await signIn.password({ emailAddress: email, password });
-      if (error) {
-        setFormError(error.message ?? "Sign-in failed");
-        return;
-      }
-      if (signIn.status === "complete") {
-        await signIn.finalize({
-          navigate: async () => {
-            router.replace("/");
-          },
-        });
-      }
-    } else {
-      const { error } = await signUp.password({ emailAddress: email, password });
-      if (error) {
-        setFormError(error.message ?? "Sign-up failed");
-        return;
-      }
-      await signUp.verifications.sendEmailCode();
-    }
-  };
-
-  const handleVerify = async () => {
-    setFormError(null);
-    await signUp.verifications.verifyEmailCode({ code });
-    if (signUp.status === "complete") {
-      await signUp.finalize({
-        navigate: async () => {
-          router.replace("/");
-        },
-      });
-    } else {
-      setFormError("Verification failed. Check the code and try again.");
-    }
-  };
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<"google" | "email" | null>(null);
 
   if (isSignedIn) return <Redirect href="/" />;
 
-  const needsVerification =
-    mode === "sign-up" &&
-    signUp.status === "missing_requirements" &&
-    signUp.unverifiedFields.includes("email_address") &&
-    signUp.missingFields.length === 0;
+  const handleGoogle = async () => {
+    setError(null);
+    setLoading("google");
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setError(firebaseErrorMessage(err));
+    } finally {
+      setLoading(null);
+    }
+  };
 
-  const fieldError =
-    formError ??
-    signInErrors.fields.identifier?.message ??
-    signInErrors.fields.password?.message ??
-    signUpErrors.fields.emailAddress?.message ??
-    signUpErrors.fields.password?.message ??
-    signUpErrors.fields.code?.message ??
-    null;
+  const handleEmailSubmit = async () => {
+    setError(null);
+    setLoading("email");
+    try {
+      if (mode === "sign-in") {
+        await signInWithEmail(email, password);
+      } else {
+        await signUpWithEmail(email, password);
+      }
+    } catch (err) {
+      setError(firebaseErrorMessage(err));
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const busy = loading !== null;
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -162,143 +107,89 @@ export default function SignInScreen() {
           </LinearGradient>
           <Text style={[styles.title, { color: colors.foreground }]}>Videofy</Text>
           <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-            {needsVerification
-              ? "Check your email for a verification code"
-              : mode === "sign-in"
+            {mode === "sign-in"
               ? "Sign in to identify any movie or show"
               : "Create your account to get started"}
           </Text>
         </View>
 
-        {needsVerification ? (
-          <View style={styles.form}>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
-              value={code}
-              onChangeText={setCode}
-              placeholder="Verification code"
-              placeholderTextColor={colors.mutedForeground}
-              keyboardType="numeric"
-              autoFocus
-            />
-            {fieldError && <Text style={styles.error}>{fieldError}</Text>}
-            <Pressable onPress={handleVerify} disabled={busy || !code}>
-              <LinearGradient
-                colors={["#884dff", "#7c3aed"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={[styles.primaryBtn, (busy || !code) && { opacity: 0.6 }]}
-              >
-                {busy ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryBtnText}>Verify Email</Text>
-                )}
-              </LinearGradient>
-            </Pressable>
-            <Pressable onPress={() => signUp.verifications.sendEmailCode()}>
-              <Text style={[styles.linkText, { color: colors.primary }]}>Resend code</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <View style={styles.form}>
-            <Pressable
-              onPress={() => handleSSO("oauth_google")}
-              disabled={!!ssoLoading}
-              style={({ pressed }) => [
-                styles.ssoBtn,
-                { backgroundColor: "#fff", opacity: pressed || ssoLoading ? 0.8 : 1 },
-              ]}
-            >
-              {ssoLoading === "oauth_google" ? (
-                <ActivityIndicator color="#111" />
-              ) : (
-                <>
-                  <Ionicons name="logo-google" size={20} color="#111" />
-                  <Text style={[styles.ssoBtnText, { color: "#111" }]}>Continue with Google</Text>
-                </>
-              )}
-            </Pressable>
+        <View style={styles.form}>
+          <Pressable
+            onPress={handleGoogle}
+            disabled={busy}
+            style={({ pressed }) => [
+              styles.ssoBtn,
+              { backgroundColor: "#fff", opacity: pressed || busy ? 0.8 : 1 },
+            ]}
+          >
+            {loading === "google" ? (
+              <ActivityIndicator color="#111" />
+            ) : (
+              <>
+                <Ionicons name="logo-google" size={20} color="#111" />
+                <Text style={[styles.ssoBtnText, { color: "#111" }]}>Continue with Google</Text>
+              </>
+            )}
+          </Pressable>
 
-            <Pressable
-              onPress={() => handleSSO("oauth_apple")}
-              disabled={!!ssoLoading}
-              style={({ pressed }) => [
-                styles.ssoBtn,
-                { backgroundColor: "#000", borderWidth: 1, borderColor: colors.border, opacity: pressed || ssoLoading ? 0.8 : 1 },
-              ]}
+          <View style={styles.dividerRow}>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            <Text style={[styles.dividerText, { color: colors.mutedForeground }]}>or</Text>
+            <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+          </View>
+
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
+            value={email}
+            onChangeText={setEmail}
+            placeholder="Email address"
+            placeholderTextColor={colors.mutedForeground}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Password"
+            placeholderTextColor={colors.mutedForeground}
+            secureTextEntry
+          />
+          {error && <Text style={styles.error}>{error}</Text>}
+
+          <Pressable onPress={handleEmailSubmit} disabled={busy || !email || !password}>
+            <LinearGradient
+              colors={["#884dff", "#7c3aed"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={[styles.primaryBtn, (busy || !email || !password) && { opacity: 0.6 }]}
             >
-              {ssoLoading === "oauth_apple" ? (
+              {loading === "email" ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <>
-                  <Ionicons name="logo-apple" size={22} color="#fff" />
-                  <Text style={[styles.ssoBtnText, { color: "#fff" }]}>Continue with Apple</Text>
-                </>
-              )}
-            </Pressable>
-
-            <View style={styles.dividerRow}>
-              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-              <Text style={[styles.dividerText, { color: colors.mutedForeground }]}>or</Text>
-              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-            </View>
-
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Email address"
-              placeholderTextColor={colors.mutedForeground}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password"
-              placeholderTextColor={colors.mutedForeground}
-              secureTextEntry
-            />
-            {fieldError && <Text style={styles.error}>{fieldError}</Text>}
-
-            <Pressable onPress={handleEmailSubmit} disabled={busy || !email || !password}>
-              <LinearGradient
-                colors={["#884dff", "#7c3aed"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={[styles.primaryBtn, (busy || !email || !password) && { opacity: 0.6 }]}
-              >
-                {busy ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryBtnText}>
-                    {mode === "sign-in" ? "Sign In" : "Create Account"}
-                  </Text>
-                )}
-              </LinearGradient>
-            </Pressable>
-
-            <View style={styles.switchRow}>
-              <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>
-                {mode === "sign-in" ? "Don't have an account?" : "Already have an account?"}
-              </Text>
-              <Pressable
-                onPress={() => {
-                  setFormError(null);
-                  setMode(mode === "sign-in" ? "sign-up" : "sign-in");
-                }}
-              >
-                <Text style={[styles.linkText, { color: colors.primary }]}>
-                  {mode === "sign-in" ? "Sign up" : "Sign in"}
+                <Text style={styles.primaryBtnText}>
+                  {mode === "sign-in" ? "Sign In" : "Create Account"}
                 </Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
+              )}
+            </LinearGradient>
+          </Pressable>
 
-        <View nativeID="clerk-captcha" />
+          <View style={styles.switchRow}>
+            <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>
+              {mode === "sign-in" ? "Don't have an account?" : "Already have an account?"}
+            </Text>
+            <Pressable
+              onPress={() => {
+                setError(null);
+                setMode(mode === "sign-in" ? "sign-up" : "sign-in");
+              }}
+            >
+              <Text style={[styles.linkText, { color: colors.primary }]}>
+                {mode === "sign-in" ? "Sign up" : "Sign in"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
       </ScrollView>
     </View>
   );

@@ -20,7 +20,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
-import { useUser } from "@clerk/expo";
+import { useAuth } from "@/lib/auth-context";
 import { useAuthedFetch } from "@/hooks/useProfile";
 import { historyKeyFor, LocalHistoryItem } from "./history";
 
@@ -309,7 +309,7 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const authedFetch = useAuthedFetch();
-  const { user } = useUser();
+  const { user } = useAuth();
   const cameraRef = useRef<any>(null);
 
   const [scanState, setScanState] = useState<ScanState>("idle");
@@ -350,7 +350,7 @@ export default function ScanScreen() {
       type: result.type ?? null,
       platform: result.platform ?? null,
       resultData: JSON.stringify(result),
-    }, user?.id);
+    }, user?.uid);
     await Haptics.notificationAsync(
       result.found
         ? Haptics.NotificationFeedbackType.Success
