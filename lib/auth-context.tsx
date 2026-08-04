@@ -5,21 +5,14 @@ import {
   signInWithCredential,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithPhoneNumber,
   signOut as firebaseSignOut,
   GoogleAuthProvider,
-  PhoneAuthProvider,
   User,
-} from "firebase/auth";
+  ConfirmationResult,
+} from "@react-native-firebase/auth";
 import { auth } from "@/lib/firebase";
 import { setAuthTokenGetter } from "@/lib/api-client";
-
-let FirebaseRecaptchaVerifierModal: any = null;
-if (Platform.OS !== "web") {
-  try {
-    FirebaseRecaptchaVerifierModal = require("expo-firebase-recaptcha").FirebaseRecaptchaVerifierModal;
-  } catch {}
-}
-export { FirebaseRecaptchaVerifierModal };
 
 let GoogleSignin: any = null;
 if (Platform.OS !== "web") {
@@ -38,8 +31,11 @@ type AuthContextValue = {
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
-  sendPhoneOtp: (phoneNumber: string, recaptchaVerifier: any) => Promise<string>;
-  confirmPhoneOtp: (verificationId: string, code: string) => Promise<void>;
+  // Android verifies phone numbers silently via Play Integrity/SafetyNet and
+  // iOS via a silent push — neither needs a reCAPTCHA UI, unlike the plain
+  // JS Firebase SDK we moved off of.
+  sendPhoneOtp: (phoneNumber: string) => Promise<ConfirmationResult>;
+  confirmPhoneOtp: (confirmation: ConfirmationResult, code: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -77,13 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signUpWithEmail: async (email, password) => {
       await createUserWithEmailAndPassword(auth, email, password);
     },
-    sendPhoneOtp: async (phoneNumber, recaptchaVerifier) => {
-      const phoneProvider = new PhoneAuthProvider(auth);
-      return phoneProvider.verifyPhoneNumber(phoneNumber, recaptchaVerifier);
+    sendPhoneOtp: async (phoneNumber) => {
+      return signInWithPhoneNumber(auth, phoneNumber);
     },
-    confirmPhoneOtp: async (verificationId, code) => {
-      const credential = PhoneAuthProvider.credential(verificationId, code);
-      await signInWithCredential(auth, credential);
+    confirmPhoneOtp: async (confirmation, code) => {
+      await confirmation.confirm(code);
     },
     signOut: async () => {
       if (GoogleSignin) {

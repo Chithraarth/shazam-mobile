@@ -15,6 +15,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { setBaseUrl } from "@/lib/api-client";
 import { AuthProvider } from "@/lib/auth-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import AnimatedSplash from "@/components/AnimatedSplash";
 
 setBaseUrl(`https://${process.env.EXPO_PUBLIC_DOMAIN}`);
 
@@ -47,14 +48,14 @@ export default function RootLayout() {
     Inter_600SemiBold,
     Inter_700Bold,
   });
+  const [showSplash, setShowSplash] = React.useState(true);
+  const appReady = Boolean(fontsLoaded || fontError);
 
   useEffect(() => {
-    if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded, fontError]);
-
-  if (!fontsLoaded && !fontError) return null;
+    // Hide the static native splash immediately and hand off to the
+    // animated JS splash, which stays up until fonts finish loading.
+    SplashScreen.hideAsync();
+  }, []);
 
   return (
     <AuthProvider>
@@ -63,12 +64,15 @@ export default function RootLayout() {
           <QueryClientProvider client={queryClient}>
             <GestureHandlerRootView style={{ flex: 1 }}>
               <KeyboardProvider>
-                <RootLayoutNav />
+                {appReady && <RootLayoutNav />}
               </KeyboardProvider>
             </GestureHandlerRootView>
           </QueryClientProvider>
         </ErrorBoundary>
       </SafeAreaProvider>
+      {showSplash && (
+        <AnimatedSplash isReady={appReady} onFinish={() => setShowSplash(false)} />
+      )}
     </AuthProvider>
   );
 }

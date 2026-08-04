@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Redirect } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -14,8 +14,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
-import { useAuth, FirebaseRecaptchaVerifierModal } from "@/lib/auth-context";
-import { firebaseConfig } from "@/lib/firebase";
+import { useAuth } from "@/lib/auth-context";
+import type { ConfirmationResult } from "@react-native-firebase/auth";
 
 type Mode = "sign-in" | "sign-up";
 type Method = "email" | "phone";
@@ -95,7 +95,6 @@ export default function SignInScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { isSignedIn, signInWithGoogle, signInWithEmail, signUpWithEmail, sendPhoneOtp, confirmPhoneOtp } = useAuth();
-  const recaptchaVerifier = useRef<any>(null);
 
   const [mode, setMode] = useState<Mode>("sign-in");
   const [method, setMethod] = useState<Method>("email");
@@ -103,7 +102,7 @@ export default function SignInScreen() {
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
-  const [verificationId, setVerificationId] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<"google" | "email" | "send" | "verify" | null>(null);
   const { secondsLeft, start } = useResendTimer();
@@ -144,8 +143,8 @@ export default function SignInScreen() {
     setError(null);
     setLoading("send");
     try {
-      const id = await sendPhoneOtp(phone, recaptchaVerifier.current);
-      setVerificationId(id);
+      const result = await sendPhoneOtp(phone);
+      setConfirmation(result);
       start();
     } catch (err) {
       setError(firebaseErrorMessage(err));
@@ -155,11 +154,11 @@ export default function SignInScreen() {
   };
 
   const handleVerifyCode = async () => {
-    if (!verificationId) return;
+    if (!confirmation) return;
     setError(null);
     setLoading("verify");
     try {
-      await confirmPhoneOtp(verificationId, code);
+      await confirmPhoneOtp(confirmation, code);
     } catch (err) {
       setError(firebaseErrorMessage(err));
     } finally {
@@ -169,9 +168,6 @@ export default function SignInScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      {FirebaseRecaptchaVerifierModal && (
-        <FirebaseRecaptchaVerifierModal ref={recaptchaVerifier} firebaseConfig={firebaseConfig} />
-      )}
       <LinearGradient
         colors={["rgba(136,77,255,0.14)", colors.background]}
         start={{ x: 0.5, y: 0 }}
@@ -298,7 +294,7 @@ export default function SignInScreen() {
                 </Pressable>
               </View>
             </>
-          ) : !verificationId ? (
+          ) : !confirmation ? (
             <>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}

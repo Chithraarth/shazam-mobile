@@ -59,7 +59,9 @@
         {
           "iosUrlScheme": "com.googleusercontent.apps.816984918533-vbt1bm34gtki8em3e3hdm69dle406mjd"
         }
-      ]
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth"
     ],
     "experiments": {
       "typedRoutes": true,
