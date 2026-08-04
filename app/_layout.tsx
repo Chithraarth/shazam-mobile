@@ -10,12 +10,10 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { setBaseUrl } from "@/lib/api-client";
 import { AuthProvider } from "@/lib/auth-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import AnimatedSplash from "@/components/AnimatedSplash";
 
 setBaseUrl(`https://${process.env.EXPO_PUBLIC_DOMAIN}`);
 
@@ -48,14 +46,14 @@ export default function RootLayout() {
     Inter_600SemiBold,
     Inter_700Bold,
   });
-  const [showSplash, setShowSplash] = React.useState(true);
-  const appReady = Boolean(fontsLoaded || fontError);
 
   useEffect(() => {
-    // Hide the static native splash immediately and hand off to the
-    // animated JS splash, which stays up until fonts finish loading.
-    SplashScreen.hideAsync();
-  }, []);
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, fontError]);
+
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <AuthProvider>
@@ -63,16 +61,11 @@ export default function RootLayout() {
         <ErrorBoundary>
           <QueryClientProvider client={queryClient}>
             <GestureHandlerRootView style={{ flex: 1 }}>
-              <KeyboardProvider>
-                {appReady && <RootLayoutNav />}
-              </KeyboardProvider>
+              <RootLayoutNav />
             </GestureHandlerRootView>
           </QueryClientProvider>
         </ErrorBoundary>
       </SafeAreaProvider>
-      {showSplash && (
-        <AnimatedSplash isReady={appReady} onFinish={() => setShowSplash(false)} />
-      )}
     </AuthProvider>
   );
 }
