@@ -48,6 +48,9 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [creditedCount, setCreditedCount] = useState(0);
   const inFlight = useRef(new Set<string>());
+  // Purchases already credited this session, so a stale availablePurchases
+  // list doesn't re-verify them.
+  const credited = useRef(new Set<string>());
 
   const finishRef = useRef<((args: { purchase: Purchase; isConsumable?: boolean }) => Promise<void>) | null>(null);
 
@@ -60,6 +63,7 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
       }
 
       const key = purchase.purchaseToken ?? purchase.id;
+      if (credited.current.has(key)) return "credited";
       if (inFlight.current.has(key)) return "retry";
       inFlight.current.add(key);
 
@@ -76,6 +80,7 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
           return "pending";
         }
         if (res.ok) {
+          credited.current.add(key);
           // On Android the backend has already consumed the purchase, and
           // consuming it again here would fail. iOS consumables can only be
           // finished on the device.
