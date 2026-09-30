@@ -5,6 +5,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as VideoThumbnails from "expo-video-thumbnails";
 import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -24,17 +25,31 @@ import { useAuth } from "@/lib/auth-context";
 import { useAuthedFetch, useProfile } from "@/hooks/useProfile";
 import { historyKeyFor, LocalHistoryItem } from "./history";
 
-const MAX_IMAGE_BYTES = 7 * 1024 * 1024;
+// Longest edge sent to the backend. Plenty for reading on-screen text and
+// faces, and keeps uploads well under the backend's 8MB limit.
+const MAX_IMAGE_EDGE = 1600;
 const FRAME_SIZE = 260;
 const CORNER_SIZE = 28;
 const CORNER_THICKNESS = 3;
 
-function getBase64Size(b64: string) {
-  return Math.floor(b64.length * 0.75);
-}
-function compressIfNeeded(base64: string): string {
-  if (getBase64Size(base64) <= MAX_IMAGE_BYTES) return base64;
-  return base64.substring(0, Math.floor(MAX_IMAGE_BYTES / 0.75));
+// Shrinks the image so its longest edge is at most MAX_IMAGE_EDGE and
+// re-encodes it as JPEG. Images already small enough are only re-encoded.
+async function prepareImage(uri: string, width?: number, height?: number): Promise<string> {
+  const longest = Math.max(width ?? 0, height ?? 0);
+  const actions: ImageManipulator.Action[] = [];
+  if (!longest || longest > MAX_IMAGE_EDGE) {
+    // When the size is unknown, width is assumed to be the longest edge.
+    actions.push({
+      resize: (height ?? 0) > (width ?? 0) ? { height: MAX_IMAGE_EDGE } : { width: MAX_IMAGE_EDGE },
+    });
+  }
+  const result = await ImageManipulator.manipulateAsync(uri, actions, {
+    compress: 0.8,
+    format: ImageManipulator.SaveFormat.JPEG,
+    base64: true,
+  });
+  if (!result.base64) throw new Error("Couldn't process that image. Please try another.");
+  return result.base64;
 }
 async function saveToHistory(item: LocalHistoryItem, userId: string | null | undefined) {
   try {
@@ -337,7 +352,7 @@ export default function ScanScreen() {
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 || res.status === 403) throw new Error("ACCESS_DENIED");
       if (res.status === 402) throw new Error("OUT_OF_SCANS");
-      throw new Error((data as any).error ?? `Server error ${res.status}`);
+      throw new Error((data as any).message ?? (data as any).error ?? `Server error ${res.status}`);
     }
     return res.json();
   }
@@ -376,7 +391,7 @@ export default function ScanScreen() {
     setErrorMsg(null);
     try {
       let imageData: string;
-      let mimeType = "image/jpeg";
+      const mimeType = "image/jpeg";
       if (canUseCamera && cameraRef.current) {
         // Some Android camera HALs (notably ColorOS/OnePlus) reliably throw
         // "Aborted" from takePictureAsync when skipProcessing:true is used —
@@ -393,7 +408,7 @@ export default function ScanScreen() {
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
             photo = await cameraRef.current.takePictureAsync({
-              base64: true, quality: 0.75,
+              quality: 0.85,
             });
             captureError = null;
             break;
@@ -403,15 +418,15 @@ export default function ScanScreen() {
           }
         }
         if (captureError) throw captureError;
-        if (!photo?.base64) throw new Error("Camera capture failed");
-        imageData = compressIfNeeded(photo.base64);
+        if (!photo?.uri) throw new Error("Camera capture failed");
+        imageData = await prepareImage(photo.uri, photo.width, photo.height);
       } else {
         const picked = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ["images"], quality: 0.75, base64: true, allowsEditing: false,
+          mediaTypes: ["images"], quality: 1, allowsEditing: false,
         });
-        if (picked.canceled || !picked.assets?.[0]?.base64) { setScanState("idle"); return; }
-        imageData = compressIfNeeded(picked.assets[0].base64!);
-        mimeType = picked.assets[0].mimeType ?? "image/jpeg";
+        if (picked.canceled || !picked.assets?.[0]?.uri) { setScanState("idle"); return; }
+        const asset = picked.assets[0];
+        imageData = await prepareImage(asset.uri, asset.width, asset.height);
       }
       await runScan(imageData, mimeType);
     } catch (err: any) {
@@ -424,7 +439,7 @@ export default function ScanScreen() {
       setScanState("error");
       setErrorMsg(
         err.message === "ACCESS_DENIED"
-          ? "Full access required — get lifetime access from the Account tab"
+          ? "Your session has expired. Please sign out and sign in again."
           : err.message === "Aborted"
             ? "Camera wasn't ready — please try again, or use Upload if this keeps happening."
             : err.message ?? "Scan failed. Please try again."
@@ -441,11 +456,11 @@ export default function ScanScreen() {
     setErrorMsg(null);
     try {
       const picked = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"], quality: 0.75, base64: true, allowsEditing: false,
+        mediaTypes: ["images"], quality: 1, allowsEditing: false,
       });
-      if (picked.canceled || !picked.assets?.[0]?.base64) { setScanState("idle"); return; }
-      const mimeType = picked.assets[0].mimeType ?? "image/jpeg";
-      await runScan(compressIfNeeded(picked.assets[0].base64!), mimeType);
+      if (picked.canceled || !picked.assets?.[0]?.uri) { setScanState("idle"); return; }
+      const asset = picked.assets[0];
+      await runScan(await prepareImage(asset.uri, asset.width, asset.height), "image/jpeg");
     } catch (err: any) {
       if (err.message === "OUT_OF_SCANS") {
         setScanState("idle");
@@ -456,7 +471,7 @@ export default function ScanScreen() {
       setScanState("error");
       setErrorMsg(
         err.message === "ACCESS_DENIED"
-          ? "Full access required — get lifetime access from the Account tab"
+          ? "Your session has expired. Please sign out and sign in again."
           : err.message ?? "Upload failed. Please try again."
       );
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -491,11 +506,13 @@ export default function ScanScreen() {
           quality: 0.75,
         });
       }
-      const base64 = await FileSystem.readAsStringAsync(thumb.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      await FileSystem.deleteAsync(thumb.uri, { idempotent: true }).catch(() => {});
-      await runScan(compressIfNeeded(base64), "image/jpeg");
+      let base64: string;
+      try {
+        base64 = await prepareImage(thumb.uri, thumb.width, thumb.height);
+      } finally {
+        await FileSystem.deleteAsync(thumb.uri, { idempotent: true }).catch(() => {});
+      }
+      await runScan(base64, "image/jpeg");
     } catch (err: any) {
       if (err.message === "OUT_OF_SCANS") {
         setScanState("idle");
@@ -506,7 +523,7 @@ export default function ScanScreen() {
       setScanState("error");
       setErrorMsg(
         err.message === "ACCESS_DENIED"
-          ? "Full access required — get lifetime access from the Account tab"
+          ? "Your session has expired. Please sign out and sign in again."
           : "Couldn't read that recording. Please try another clip."
       );
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

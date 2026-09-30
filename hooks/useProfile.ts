@@ -32,6 +32,8 @@ export type Profile = {
   id: string;
   email: string | null;
   scansRemaining: number;
+  // StoreKit appAccountToken for iOS purchases (derived from the user ID).
+  appAccountToken?: string;
   country: string | null;
   language: string | null;
   contentRegions: string[];

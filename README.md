@@ -6,7 +6,7 @@ Standalone Expo (React Native) app: scan with the camera or import a screen reco
 
 ```bash
 npm install
-cp .env.example .env   # fill in Clerk key and backend domain
+cp .env.example .env   # fill in backend domain and scan pack product ID
 npm run dev            # starts Expo; scan the QR with Expo Go
 ```
 
@@ -21,6 +21,7 @@ npm run dev            # starts Expo; scan the QR with Expo Go
 ## Structure
 
 - `app/` — Expo Router screens: `(tabs)` (scan, history, account), sign-in, onboarding, paywall, result
+- `lib/billing.tsx` — Google Play / App Store scan-pack purchases (expo-iap), verified by the backend
 - `components/` — ScanButton, ConfidenceRing, error boundaries
 - `lib/api-client/` — typed API client + React Query hooks (formerly `@workspace/api-client-react`)
 - `hooks/`, `constants/` — profile hook, colors

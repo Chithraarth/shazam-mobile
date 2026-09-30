@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Redirect, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -14,102 +14,39 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useIAP, type Purchase, type ProductAndroid } from "expo-iap";
 import { useColors } from "@/hooks/useColors";
-import { useAuthedFetch, useProfile } from "@/hooks/useProfile";
-
-const SCAN_PACK_SKU = process.env.EXPO_PUBLIC_SCAN_PACK_PRODUCT_ID ?? "";
-const SCANS_PER_PACK = 50;
+import { useProfile } from "@/hooks/useProfile";
+import { SCANS_PER_PACK, useBilling } from "@/lib/billing";
 
 export default function PaywallScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { isSignedIn, user, signOut } = useAuth();
-  const authedFetch = useAuthedFetch();
-  const { data: profile, refetch } = useProfile();
+  const { isSignedIn, signOut } = useAuth();
+  const { data: profile } = useProfile();
+  const billing = useBilling();
 
-  const [purchaseLoading, setPurchaseLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const close = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/");
+  };
 
-  const verifyAndFinish = useCallback(
-    async (purchase: Purchase) => {
-      const purchaseToken = purchase.purchaseToken;
-      if (!purchaseToken) {
-        setPurchaseLoading(false);
-        return;
-      }
-      try {
-        const res = await authedFetch("/api/billing/verify", {
-          method: "POST",
-          body: JSON.stringify({ purchaseToken, productId: purchase.productId }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error((data as { error?: string }).error ?? "Could not verify purchase");
-        }
-        // Consumable: the user must be able to buy this pack again once
-        // they've used up the credits it granted.
-        await finishTransaction({ purchase, isConsumable: true });
-        await refetch();
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.replace("/");
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Purchase verification failed. Please try again.");
-      } finally {
-        setPurchaseLoading(false);
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [authedFetch, refetch, router]
-  );
-
-  const { connected, products, fetchProducts, requestPurchase, finishTransaction } = useIAP({
-    onPurchaseSuccess: verifyAndFinish,
-    onPurchaseError: (err) => {
-      setPurchaseLoading(false);
-      // The user backing out of the native purchase sheet isn't an error.
-      if (err.code !== "user-cancelled") {
-        setError(err.message);
-      }
-    },
-  });
-
+  // Leave once a purchase made (or restored) while this screen is open has
+  // been credited.
+  const creditedOnOpen = useRef(billing.creditedCount);
   useEffect(() => {
-    if (connected && SCAN_PACK_SKU) {
-      fetchProducts({ skus: [SCAN_PACK_SKU], type: "in-app" });
-    }
+    if (billing.creditedCount > creditedOnOpen.current) close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected]);
+  }, [billing.creditedCount]);
+
+  useEffect(() => billing.clearError, []);
 
   if (!isSignedIn) return <Redirect href="/sign-in" />;
-  if ((profile?.scansRemaining ?? 0) > 0) return <Redirect href="/" />;
 
-  const product = products.find((p) => p.id === SCAN_PACK_SKU) as ProductAndroid | undefined;
-  const priceText = product?.displayPrice ?? "₹200";
-  const canPurchase = connected && !!product && !purchaseLoading;
-
-  const handlePurchase = async () => {
-    if (!product || !user) return;
-    setError(null);
-    setPurchaseLoading(true);
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    try {
-      await requestPurchase({
-        request: {
-          google: {
-            skus: [SCAN_PACK_SKU],
-            obfuscatedAccountId: user.uid,
-          },
-        },
-        type: "in-app",
-      });
-      // Resolution happens via onPurchaseSuccess/onPurchaseError above.
-    } catch (e) {
-      setPurchaseLoading(false);
-      setError(e instanceof Error ? e.message : "Could not start purchase. Please try again.");
-    }
-  };
+  const scansLeft = profile?.scansRemaining ?? 0;
+  const { priceText } = billing;
+  const canPurchase = billing.connected && !!billing.product && !billing.purchasing;
+  const storeName = Platform.OS === "ios" ? "the App Store" : "Google Play";
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -131,7 +68,7 @@ export default function PaywallScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Pressable
-          onPress={() => { Haptics.selectionAsync(); if (router.canGoBack()) router.back(); else router.replace("/"); }}
+          onPress={() => { Haptics.selectionAsync(); close(); }}
           hitSlop={12}
           style={styles.closeBtn}
         >
@@ -146,9 +83,13 @@ export default function PaywallScreen() {
           >
             <Ionicons name="film" size={30} color="#fff" />
           </LinearGradient>
-          <Text style={[styles.title, { color: colors.foreground }]}>You're Out of Scans</Text>
+          <Text style={[styles.title, { color: colors.foreground }]}>
+            {scansLeft > 0 ? "Get More Scans" : "You're Out of Scans"}
+          </Text>
           <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-            Grab another {SCANS_PER_PACK}-scan pack for just {priceText} to keep identifying
+            {scansLeft > 0
+              ? `You have ${scansLeft} scan${scansLeft === 1 ? "" : "s"} left. Add a ${SCANS_PER_PACK}-scan pack for ${priceText}.`
+              : `Get a ${SCANS_PER_PACK}-scan pack for ${priceText} to keep identifying`}
           </Text>
         </View>
 
@@ -177,16 +118,25 @@ export default function PaywallScreen() {
             ))}
           </View>
 
-          {error && <Text style={styles.error}>{error}</Text>}
+          {billing.pendingPayment && (
+            <View style={styles.pendingBox}>
+              <Ionicons name="time-outline" size={16} color="#fbbf24" />
+              <Text style={styles.pendingText}>
+                Your payment is still processing. Your scans will be added automatically once {storeName} confirms it.
+              </Text>
+            </View>
+          )}
 
-          <Pressable onPress={handlePurchase} disabled={!canPurchase}>
+          {billing.error && <Text style={styles.error}>{billing.error}</Text>}
+
+          <Pressable onPress={billing.buyScanPack} disabled={!canPurchase}>
             <LinearGradient
               colors={["#884dff", "#7c3aed"]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={[styles.buyBtn, !canPurchase && { opacity: 0.7 }]}
             >
-              {purchaseLoading || !connected ? (
+              {billing.purchasing || !billing.connected || !billing.product ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
@@ -197,8 +147,16 @@ export default function PaywallScreen() {
             </LinearGradient>
           </Pressable>
 
+          <Pressable onPress={billing.restorePurchases} disabled={billing.restoring} style={styles.restoreBtn}>
+            {billing.restoring ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Text style={[styles.restoreText, { color: colors.primary }]}>Restore purchases</Text>
+            )}
+          </Pressable>
+
           <Text style={[styles.note, { color: colors.mutedForeground }]}>
-            Secure checkout powered by Google Play
+            One-time purchase through {storeName}
           </Text>
         </View>
 
@@ -262,4 +220,15 @@ const styles = StyleSheet.create({
   signOutBtn: { alignItems: "center", paddingVertical: 4 },
   signOutText: { fontSize: 13 },
   error: { color: "#f87171", fontSize: 13, textAlign: "center" },
+  pendingBox: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "flex-start",
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: "rgba(251,191,36,0.1)",
+  },
+  pendingText: { color: "#fbbf24", fontSize: 13, flex: 1, lineHeight: 18 },
+  restoreBtn: { alignItems: "center", paddingVertical: 4, minHeight: 24 },
+  restoreText: { fontSize: 14, fontWeight: "600" },
 });

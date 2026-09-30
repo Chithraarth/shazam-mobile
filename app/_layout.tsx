@@ -13,6 +13,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { setBaseUrl } from "@/lib/api-client";
 import { AuthProvider } from "@/lib/auth-context";
+import { BillingProvider } from "@/lib/billing";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 setBaseUrl(`https://${process.env.EXPO_PUBLIC_DOMAIN}`);
@@ -60,9 +61,11 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ErrorBoundary>
           <QueryClientProvider client={queryClient}>
-            <GestureHandlerRootView style={{ flex: 1 }}>
-              <RootLayoutNav />
-            </GestureHandlerRootView>
+            <BillingProvider>
+              <GestureHandlerRootView style={{ flex: 1 }}>
+                <RootLayoutNav />
+              </GestureHandlerRootView>
+            </BillingProvider>
           </QueryClientProvider>
         </ErrorBoundary>
       </SafeAreaProvider>
