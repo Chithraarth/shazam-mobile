@@ -105,17 +105,24 @@ export default function AccountScreen() {
               {profile?.email ?? "Your Account"}
             </Text>
             <View style={styles.memberRow}>
-              <Ionicons
-                name={profile?.hasActiveSubscription ? "diamond" : "person-circle-outline"}
-                size={12}
-                color={profile?.hasActiveSubscription ? "#fbbf24" : "#9ca3af"}
-              />
+              <Ionicons name="flash" size={12} color="#fbbf24" />
               <Text style={[styles.appSub, { color: colors.mutedForeground }]}>
-                {profile?.hasActiveSubscription ? "Yearly Member" : "Free Plan"}
+                {profile?.scansRemaining ?? 0} scan{profile?.scansRemaining === 1 ? "" : "s"} left
               </Text>
             </View>
           </View>
         </View>
+
+        <Pressable
+          onPress={() => router.push("/paywall")}
+          style={({ pressed }) => [
+            styles.buyMoreBtn,
+            { backgroundColor: "rgba(136,77,255,0.12)", opacity: pressed ? 0.8 : 1 },
+          ]}
+        >
+          <Ionicons name="add-circle" size={20} color={colors.primary} />
+          <Text style={[styles.buyMoreText, { color: colors.primary }]}>Buy more scans</Text>
+        </Pressable>
 
         {stats.total > 0 && (
           <View style={styles.statsRow}>
@@ -210,6 +217,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
   },
+  buyMoreBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 14,
+  },
+  buyMoreText: { fontSize: 15, fontWeight: "600" },
   statIcon: { fontSize: 20 },
   statValue: { fontSize: 22, fontWeight: "700" },
   statLabel: { fontSize: 12 },

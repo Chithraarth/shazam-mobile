@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Redirect } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -13,17 +13,31 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Localization from "expo-localization";
+import { parsePhoneNumberFromString } from "libphonenumber-js";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth-context";
+import { CountryCodeSelect } from "@/components/CountryCodeSelect";
+import { DEFAULT_COUNTRY_ISO2 } from "@/lib/countries";
 import type { ConfirmationResult } from "@react-native-firebase/auth";
+
+function guessDefaultCountry(): string {
+  return Localization.getLocales()[0]?.regionCode ?? DEFAULT_COUNTRY_ISO2;
+}
 
 type Mode = "sign-in" | "sign-up";
 type Method = "email" | "phone";
 const RESEND_SECONDS = 60;
 
-function firebaseErrorMessage(err: unknown): string {
+// Returns null for errors that shouldn't be shown to the user at all (e.g. the
+// user simply cancelled a sign-in flow).
+function firebaseErrorMessage(err: unknown): string | null {
   const code = (err as { code?: string })?.code ?? "";
   switch (code) {
+    case "auth/popup-closed-by-user":
+    case "auth/cancelled-popup-request":
+    case "auth/user-cancelled":
+      return null;
     case "auth/invalid-credential":
     case "auth/wrong-password":
     case "auth/user-not-found":
@@ -42,6 +56,18 @@ function firebaseErrorMessage(err: unknown): string {
       return "That code has expired. Please request a new one.";
     case "auth/too-many-requests":
       return "Too many attempts. Please try again later.";
+    case "auth/network-request-failed":
+      return "Network error. Check your connection and try again.";
+    case "auth/operation-not-allowed":
+      return "This sign-in method isn't enabled for this app yet.";
+    case "auth/operation-not-supported-in-this-environment":
+      return "Google Play Services is required for Google sign-in on this device.";
+    case "auth/account-exists-with-different-credential":
+      return "An account already exists with this email using a different sign-in method.";
+    case "auth/quota-exceeded":
+      return "SMS quota exceeded. Please try again later.";
+    case "auth/missing-verification-code":
+      return "Please enter the verification code.";
     default:
       return "Something went wrong. Please try again.";
   }
@@ -61,10 +87,12 @@ function PasswordField({
   value,
   onChangeText,
   colors,
+  onFocus,
 }: {
   value: string;
   onChangeText: (v: string) => void;
   colors: ReturnType<typeof useColors>;
+  onFocus?: () => void;
 }) {
   const [visible, setVisible] = useState(false);
   return (
@@ -79,6 +107,7 @@ function PasswordField({
         placeholder="Password"
         placeholderTextColor={colors.mutedForeground}
         secureTextEntry={!visible}
+        onFocus={onFocus}
       />
       <Pressable
         onPress={() => setVisible((v) => !v)}
@@ -100,12 +129,15 @@ export default function SignInScreen() {
   const [method, setMethod] = useState<Method>("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
+  const [countryIso2, setCountryIso2] = useState(guessDefaultCountry);
+  const [nationalNumber, setNationalNumber] = useState("");
   const [code, setCode] = useState("");
   const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState<"google" | "email" | "send" | "verify" | null>(null);
   const { secondsLeft, start } = useResendTimer();
+  const scrollRef = useRef<ScrollView>(null);
 
   if (isSignedIn) return <Redirect href="/" />;
 
@@ -113,11 +145,13 @@ export default function SignInScreen() {
 
   const handleGoogle = async () => {
     setError(null);
+    setNotice(null);
     setLoading("google");
     try {
       await signInWithGoogle();
     } catch (err) {
-      setError(firebaseErrorMessage(err));
+      const message = firebaseErrorMessage(err);
+      if (message) setError(message);
     } finally {
       setLoading(null);
     }
@@ -125,6 +159,7 @@ export default function SignInScreen() {
 
   const handleEmailSubmit = async () => {
     setError(null);
+    setNotice(null);
     setLoading("email");
     try {
       if (mode === "sign-in") {
@@ -139,15 +174,23 @@ export default function SignInScreen() {
     }
   };
 
-  const handleSendCode = async () => {
+  const handleSendCode = async (isResend = false) => {
     setError(null);
+    setNotice(null);
+    const parsed = parsePhoneNumberFromString(nationalNumber, countryIso2 as never);
+    if (!parsed?.isValid()) {
+      setError("Please enter a valid phone number for the selected country.");
+      return;
+    }
     setLoading("send");
     try {
-      const result = await sendPhoneOtp(phone);
+      const result = await sendPhoneOtp(parsed.number);
       setConfirmation(result);
       start();
+      setNotice(isResend ? "OTP resent successfully." : "OTP sent successfully.");
     } catch (err) {
-      setError(firebaseErrorMessage(err));
+      const message = firebaseErrorMessage(err);
+      if (message) setError(message);
     } finally {
       setLoading(null);
     }
@@ -156,6 +199,7 @@ export default function SignInScreen() {
   const handleVerifyCode = async () => {
     if (!confirmation) return;
     setError(null);
+    setNotice(null);
     setLoading("verify");
     try {
       await confirmPhoneOtp(confirmation, code);
@@ -176,6 +220,7 @@ export default function SignInScreen() {
         pointerEvents="none"
       />
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={[
           styles.content,
           { paddingTop: (Platform.OS === "web" ? 67 : insets.top) + 40, paddingBottom: 40 },
@@ -231,6 +276,7 @@ export default function SignInScreen() {
                 key={m}
                 onPress={() => {
                   setError(null);
+                  setNotice(null);
                   setMethod(m);
                 }}
                 style={[styles.methodTab, method === m && { backgroundColor: colors.primary }]}
@@ -257,8 +303,14 @@ export default function SignInScreen() {
                 placeholderTextColor={colors.mutedForeground}
                 autoCapitalize="none"
                 keyboardType="email-address"
+                onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
               />
-              <PasswordField value={password} onChangeText={setPassword} colors={colors} />
+              <PasswordField
+                value={password}
+                onChangeText={setPassword}
+                colors={colors}
+                onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
+              />
               {error && <Text style={styles.error}>{error}</Text>}
 
               <Pressable onPress={handleEmailSubmit} disabled={busy || !email || !password}>
@@ -296,21 +348,29 @@ export default function SignInScreen() {
             </>
           ) : !confirmation ? (
             <>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
-                value={phone}
-                onChangeText={setPhone}
-                placeholder="+1 555 123 4567"
-                placeholderTextColor={colors.mutedForeground}
-                keyboardType="phone-pad"
-              />
+              <View style={styles.phoneRow}>
+                <CountryCodeSelect value={countryIso2} onChange={setCountryIso2} />
+                <TextInput
+                  style={[
+                    styles.input,
+                    styles.phoneInput,
+                    { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground },
+                  ]}
+                  value={nationalNumber}
+                  onChangeText={setNationalNumber}
+                  placeholder="555 123 4567"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="phone-pad"
+                  onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
+                />
+              </View>
               {error && <Text style={styles.error}>{error}</Text>}
-              <Pressable onPress={handleSendCode} disabled={busy || !phone}>
+              <Pressable onPress={() => handleSendCode(false)} disabled={busy || !nationalNumber}>
                 <LinearGradient
                   colors={["#884dff", "#7c3aed"]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
-                  style={[styles.primaryBtn, (busy || !phone) && { opacity: 0.6 }]}
+                  style={[styles.primaryBtn, (busy || !nationalNumber) && { opacity: 0.6 }]}
                 >
                   {loading === "send" ? (
                     <ActivityIndicator color="#fff" />
@@ -322,6 +382,7 @@ export default function SignInScreen() {
             </>
           ) : (
             <>
+              {notice && <Text style={styles.notice}>{notice}</Text>}
               <TextInput
                 style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground, letterSpacing: 4 }]}
                 value={code}
@@ -329,6 +390,7 @@ export default function SignInScreen() {
                 placeholder="123456"
                 placeholderTextColor={colors.mutedForeground}
                 keyboardType="number-pad"
+                onFocus={() => scrollRef.current?.scrollToEnd({ animated: true })}
               />
               {error && <Text style={styles.error}>{error}</Text>}
               <Pressable onPress={handleVerifyCode} disabled={busy || !code}>
@@ -345,7 +407,7 @@ export default function SignInScreen() {
                   )}
                 </LinearGradient>
               </Pressable>
-              <Pressable onPress={handleSendCode} disabled={secondsLeft > 0 || busy} style={{ alignItems: "center", marginTop: 4 }}>
+              <Pressable onPress={() => handleSendCode(true)} disabled={secondsLeft > 0 || busy} style={{ alignItems: "center", marginTop: 4 }}>
                 <Text style={[styles.linkText, secondsLeft > 0 && { color: colors.mutedForeground }, secondsLeft <= 0 && { color: colors.primary }]}>
                   {secondsLeft > 0 ? `Resend code in ${secondsLeft}s` : "Resend code"}
                 </Text>
@@ -399,6 +461,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   methodTabText: { fontSize: 14, fontWeight: "600" },
+  phoneRow: { flexDirection: "row", gap: 8 },
+  phoneInput: { flex: 1 },
   input: {
     borderWidth: 1,
     borderRadius: 14,
@@ -416,4 +480,5 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 8 },
   linkText: { fontSize: 14, fontWeight: "600", textAlign: "center" },
   error: { color: "#f87171", fontSize: 13, textAlign: "center" },
+  notice: { color: "#4ade80", fontSize: 13, textAlign: "center" },
 });

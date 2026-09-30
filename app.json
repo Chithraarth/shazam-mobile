@@ -61,7 +61,9 @@
         }
       ],
       "@react-native-firebase/app",
-      "@react-native-firebase/auth"
+      "@react-native-firebase/auth",
+      "expo-localization",
+      "expo-iap"
     ],
     "experiments": {
       "typedRoutes": true,

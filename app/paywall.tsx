@@ -3,8 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Redirect, useRouter } from "expo-router";
-import * as WebBrowser from "expo-web-browser";
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -15,65 +14,100 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useIAP, type Purchase, type ProductAndroid } from "expo-iap";
 import { useColors } from "@/hooks/useColors";
 import { useAuthedFetch, useProfile } from "@/hooks/useProfile";
+
+const SCAN_PACK_SKU = process.env.EXPO_PUBLIC_SCAN_PACK_PRODUCT_ID ?? "";
+const SCANS_PER_PACK = 50;
 
 export default function PaywallScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { isSignedIn, signOut } = useAuth();
+  const { isSignedIn, user, signOut } = useAuth();
   const authedFetch = useAuthedFetch();
-  const { data: profile, refetch, isRefetching } = useProfile();
+  const { data: profile, refetch } = useProfile();
 
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const [polling, setPolling] = useState(false);
+  const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const pollForAccess = async () => {
-    setPolling(true);
-    try {
-      for (let i = 0; i < 20; i++) {
-        const { data } = await refetch();
-        if (data?.hasActiveSubscription) {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          router.replace("/");
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 3000));
+  const verifyAndFinish = useCallback(
+    async (purchase: Purchase) => {
+      const purchaseToken = purchase.purchaseToken;
+      if (!purchaseToken) {
+        setPurchaseLoading(false);
+        return;
       }
-    } finally {
-      setPolling(false);
+      try {
+        const res = await authedFetch("/api/billing/verify", {
+          method: "POST",
+          body: JSON.stringify({ purchaseToken, productId: purchase.productId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error((data as { error?: string }).error ?? "Could not verify purchase");
+        }
+        // Consumable: the user must be able to buy this pack again once
+        // they've used up the credits it granted.
+        await finishTransaction({ purchase, isConsumable: true });
+        await refetch();
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.replace("/");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Purchase verification failed. Please try again.");
+      } finally {
+        setPurchaseLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [authedFetch, refetch, router]
+  );
+
+  const { connected, products, fetchProducts, requestPurchase, finishTransaction } = useIAP({
+    onPurchaseSuccess: verifyAndFinish,
+    onPurchaseError: (err) => {
+      setPurchaseLoading(false);
+      // The user backing out of the native purchase sheet isn't an error.
+      if (err.code !== "user-cancelled") {
+        setError(err.message);
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (connected && SCAN_PACK_SKU) {
+      fetchProducts({ skus: [SCAN_PACK_SKU], type: "in-app" });
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
 
   if (!isSignedIn) return <Redirect href="/sign-in" />;
-  if (profile?.hasActiveSubscription) return <Redirect href="/" />;
+  if ((profile?.scansRemaining ?? 0) > 0) return <Redirect href="/" />;
 
-  const handleCheckout = async () => {
+  const product = products.find((p) => p.id === SCAN_PACK_SKU) as ProductAndroid | undefined;
+  const priceText = product?.displayPrice ?? "₹200";
+  const canPurchase = connected && !!product && !purchaseLoading;
+
+  const handlePurchase = async () => {
+    if (!product || !user) return;
     setError(null);
-    setCheckoutLoading(true);
+    setPurchaseLoading(true);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const res = await authedFetch("/api/stripe/checkout", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !(data as { url?: string }).url) {
-        throw new Error((data as { error?: string }).error ?? "Could not start checkout");
-      }
-      await WebBrowser.openBrowserAsync((data as { url: string }).url);
-      pollForAccess();
+      await requestPurchase({
+        request: {
+          google: {
+            skus: [SCAN_PACK_SKU],
+            obfuscatedAccountId: user.uid,
+          },
+        },
+        type: "in-app",
+      });
+      // Resolution happens via onPurchaseSuccess/onPurchaseError above.
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Checkout failed. Please try again.");
-    } finally {
-      setCheckoutLoading(false);
-    }
-  };
-
-  const handleRefresh = async () => {
-    const { data } = await refetch();
-    if (data?.hasActiveSubscription) {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace("/");
+      setPurchaseLoading(false);
+      setError(e instanceof Error ? e.message : "Could not start purchase. Please try again.");
     }
   };
 
@@ -112,29 +146,29 @@ export default function PaywallScreen() {
           >
             <Ionicons name="film" size={30} color="#fff" />
           </LinearGradient>
-          <Text style={[styles.title, { color: colors.foreground }]}>One Last Step</Text>
+          <Text style={[styles.title, { color: colors.foreground }]}>You're Out of Scans</Text>
           <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-            Unlock unlimited AI-powered identification for just ₹799 a year (or your local currency equivalent)
+            Grab another {SCANS_PER_PACK}-scan pack for just {priceText} to keep identifying
           </Text>
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.primary }]}>
           <View style={[styles.badge, { backgroundColor: "rgba(136,77,255,0.15)" }]}>
-            <Text style={[styles.badgeText, { color: colors.primary }]}>YEARLY PLAN</Text>
+            <Text style={[styles.badgeText, { color: colors.primary }]}>{SCANS_PER_PACK} SCAN PACK</Text>
           </View>
-          <Text style={[styles.price, { color: colors.foreground }]}>₹799/year</Text>
+          <Text style={[styles.price, { color: colors.foreground }]}>{priceText}</Text>
           <Text style={[styles.priceSub, { color: colors.mutedForeground }]}>
-            Billed yearly · Cancel anytime
+            One-time purchase · No subscription
           </Text>
 
           <View style={styles.featureList}>
             {[
-              "Unlimited scans on all your devices",
+              `${SCANS_PER_PACK} scan credits, use anytime`,
               "Identify any movie, show or episode",
               "Personalized to your region & language",
               "Works with 50+ streaming platforms",
               "Cast, synopsis, episode details",
-              "Full scan history & stats",
+              "Buy another pack whenever you run out",
             ].map((f) => (
               <View key={f} style={styles.featureRow}>
                 <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
@@ -145,43 +179,26 @@ export default function PaywallScreen() {
 
           {error && <Text style={styles.error}>{error}</Text>}
 
-          <Pressable onPress={handleCheckout} disabled={checkoutLoading}>
+          <Pressable onPress={handlePurchase} disabled={!canPurchase}>
             <LinearGradient
               colors={["#884dff", "#7c3aed"]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={[styles.buyBtn, checkoutLoading && { opacity: 0.7 }]}
+              style={[styles.buyBtn, !canPurchase && { opacity: 0.7 }]}
             >
-              {checkoutLoading ? (
+              {purchaseLoading || !connected ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
-                  <Text style={styles.buyBtnText}>Subscribe — ₹799/year</Text>
+                  <Text style={styles.buyBtnText}>Buy {SCANS_PER_PACK} Scans — {priceText}</Text>
                   <Ionicons name="arrow-forward" size={18} color="#fff" />
                 </>
               )}
             </LinearGradient>
           </Pressable>
 
-          <Pressable onPress={handleRefresh} disabled={isRefetching || polling} style={styles.refreshBtn}>
-            {isRefetching || polling ? (
-              <View style={styles.pollingRow}>
-                <ActivityIndicator size="small" color={colors.primary} />
-                {polling && (
-                  <Text style={[styles.refreshText, { color: colors.mutedForeground }]}>
-                    Checking payment status…
-                  </Text>
-                )}
-              </View>
-            ) : (
-              <Text style={[styles.refreshText, { color: colors.primary }]}>
-                I've completed my payment
-              </Text>
-            )}
-          </Pressable>
-
           <Text style={[styles.note, { color: colors.mutedForeground }]}>
-            Secure checkout powered by Stripe
+            Secure checkout powered by Google Play
           </Text>
         </View>
 
@@ -241,9 +258,6 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   buyBtnText: { fontSize: 17, fontWeight: "700", color: "#fff" },
-  refreshBtn: { alignItems: "center", paddingVertical: 6 },
-  pollingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  refreshText: { fontSize: 14, fontWeight: "600" },
   note: { fontSize: 12, textAlign: "center" },
   signOutBtn: { alignItems: "center", paddingVertical: 4 },
   signOutText: { fontSize: 13 },

@@ -21,7 +21,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth-context";
-import { useAuthedFetch } from "@/hooks/useProfile";
+import { useAuthedFetch, useProfile } from "@/hooks/useProfile";
 import { historyKeyFor, LocalHistoryItem } from "./history";
 
 const MAX_IMAGE_BYTES = 7 * 1024 * 1024;
@@ -310,12 +310,14 @@ export default function ScanScreen() {
   const router = useRouter();
   const authedFetch = useAuthedFetch();
   const { user } = useAuth();
+  const { data: profile, refetch: refetchProfile } = useProfile();
   const cameraRef = useRef<any>(null);
 
   const [scanState, setScanState] = useState<ScanState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [cameraFacing, setCameraFacing] = useState<"back" | "front">("back");
   const [permission, requestPermission] = useCameraPerms();
+  const [cameraReady, setCameraReady] = useState(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -334,6 +336,7 @@ export default function ScanScreen() {
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 || res.status === 403) throw new Error("ACCESS_DENIED");
+      if (res.status === 402) throw new Error("OUT_OF_SCANS");
       throw new Error((data as any).error ?? `Server error ${res.status}`);
     }
     return res.json();
@@ -341,6 +344,7 @@ export default function ScanScreen() {
 
   async function runScan(imageData: string, mimeType: string) {
     const result = await callIdentify(imageData, mimeType);
+    refetchProfile();
     await saveToHistory({
       id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
       createdAt: new Date().toISOString(),
@@ -360,8 +364,13 @@ export default function ScanScreen() {
     router.push({ pathname: "/result", params: { resultData: JSON.stringify(result) } });
   }
 
+  function outOfScans(): boolean {
+    return (profile?.scansRemaining ?? 0) <= 0;
+  }
+
   async function handleScan() {
     if (scanState === "scanning") return;
+    if (outOfScans()) { router.push("/paywall"); return; }
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setScanState("scanning");
     setErrorMsg(null);
@@ -369,9 +378,31 @@ export default function ScanScreen() {
       let imageData: string;
       let mimeType = "image/jpeg";
       if (canUseCamera && cameraRef.current) {
-        const photo = await cameraRef.current.takePictureAsync({
-          base64: true, quality: 0.75, skipProcessing: true,
-        });
+        // Some Android camera HALs (notably ColorOS/OnePlus) reliably throw
+        // "Aborted" from takePictureAsync when skipProcessing:true is used —
+        // it bypasses parts of the capture pipeline their custom camera
+        // stack expects to run, unrelated to timing. Retrying doesn't help
+        // (confirmed on-device), so we don't pass skipProcessing at all; we
+        // still wait for onCameraReady and retry a couple of times in case a
+        // *different*, genuinely transient error occurs.
+        if (!cameraReady) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        let photo;
+        let captureError: any = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            photo = await cameraRef.current.takePictureAsync({
+              base64: true, quality: 0.75,
+            });
+            captureError = null;
+            break;
+          } catch (err: any) {
+            captureError = err;
+            await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+          }
+        }
+        if (captureError) throw captureError;
         if (!photo?.base64) throw new Error("Camera capture failed");
         imageData = compressIfNeeded(photo.base64);
       } else {
@@ -384,11 +415,19 @@ export default function ScanScreen() {
       }
       await runScan(imageData, mimeType);
     } catch (err: any) {
+      if (err.message === "OUT_OF_SCANS") {
+        setScanState("idle");
+        refetchProfile();
+        router.push("/paywall");
+        return;
+      }
       setScanState("error");
       setErrorMsg(
         err.message === "ACCESS_DENIED"
           ? "Full access required — get lifetime access from the Account tab"
-          : err.message ?? "Scan failed. Please try again."
+          : err.message === "Aborted"
+            ? "Camera wasn't ready — please try again, or use Upload if this keeps happening."
+            : err.message ?? "Scan failed. Please try again."
       );
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
@@ -396,6 +435,7 @@ export default function ScanScreen() {
 
   async function handleUpload() {
     if (scanState === "scanning") return;
+    if (outOfScans()) { router.push("/paywall"); return; }
     await Haptics.selectionAsync();
     setScanState("scanning");
     setErrorMsg(null);
@@ -407,6 +447,12 @@ export default function ScanScreen() {
       const mimeType = picked.assets[0].mimeType ?? "image/jpeg";
       await runScan(compressIfNeeded(picked.assets[0].base64!), mimeType);
     } catch (err: any) {
+      if (err.message === "OUT_OF_SCANS") {
+        setScanState("idle");
+        refetchProfile();
+        router.push("/paywall");
+        return;
+      }
       setScanState("error");
       setErrorMsg(
         err.message === "ACCESS_DENIED"
@@ -451,6 +497,12 @@ export default function ScanScreen() {
       await FileSystem.deleteAsync(thumb.uri, { idempotent: true }).catch(() => {});
       await runScan(compressIfNeeded(base64), "image/jpeg");
     } catch (err: any) {
+      if (err.message === "OUT_OF_SCANS") {
+        setScanState("idle");
+        refetchProfile();
+        router.push("/paywall");
+        return;
+      }
       setScanState("error");
       setErrorMsg(
         err.message === "ACCESS_DENIED"
@@ -463,6 +515,7 @@ export default function ScanScreen() {
 
   async function handleScreenScan() {
     if (scanState === "scanning") return;
+    if (outOfScans()) { router.push("/paywall"); return; }
     await Haptics.selectionAsync();
     Alert.alert(
       "Scan Your Screen",
@@ -484,6 +537,7 @@ export default function ScanScreen() {
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             facing={cameraFacing}
+            onCameraReady={() => setCameraReady(true)}
           />
           <LinearGradient
             colors={[colors.background, "transparent"]}
@@ -536,7 +590,7 @@ export default function ScanScreen() {
       <View style={[styles.topBar, { paddingTop: topPad + 12, paddingHorizontal: 16 }]}>
         {canUseCamera ? (
           <Pressable
-            onPress={() => setCameraFacing((f) => (f === "back" ? "front" : "back"))}
+            onPress={() => { setCameraReady(false); setCameraFacing((f) => (f === "back" ? "front" : "back")); }}
             style={[styles.topIconBtn, { backgroundColor: "rgba(0,0,0,0.5)" }]}
           >
             <Ionicons name="camera-reverse-outline" size={20} color="#fff" />

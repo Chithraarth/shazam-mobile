@@ -106,8 +106,8 @@ function ClassicTabLayout() {
 
 export default function TabLayout() {
   const colors = useColors();
-  const { isLoaded, isSignedIn } = useAuth();
-  const { data: profile, isLoading, isError, refetch, isRefetching } = useProfile();
+  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const { data: profile, isLoading, isError, error, refetch, isRefetching } = useProfile();
 
   if (!isLoaded || (isSignedIn && isLoading)) {
     return (
@@ -126,6 +126,11 @@ export default function TabLayout() {
         <Text style={{ color: colors.mutedForeground, fontSize: 14, textAlign: "center" }}>
           Check your connection and try again.
         </Text>
+        {error instanceof Error && (
+          <Text style={{ color: colors.mutedForeground, fontSize: 12, textAlign: "center", opacity: 0.7 }}>
+            {error.message}
+          </Text>
+        )}
         <Pressable
           onPress={() => refetch()}
           disabled={isRefetching}
@@ -136,6 +141,9 @@ export default function TabLayout() {
           ) : (
             <Text style={{ color: "#fff", fontSize: 15, fontWeight: "600" }}>Retry</Text>
           )}
+        </Pressable>
+        <Pressable onPress={() => signOut()}>
+          <Text style={{ color: colors.mutedForeground, fontSize: 14, fontWeight: "600" }}>Sign out</Text>
         </Pressable>
       </View>
     );

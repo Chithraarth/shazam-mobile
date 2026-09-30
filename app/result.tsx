@@ -48,7 +48,6 @@ interface IdentifyResult {
   synopsis?: string | null;
   alternativeTitles?: string[];
   identificationClues?: string | null;
-  locked?: boolean;
 }
 
 function getPlatformBadgeStyle(platform: string): { bg: string; text: string } {
@@ -169,43 +168,10 @@ export default function ResultScreen() {
             end={{ x: 0.5, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
-          <ConfidenceRing confidence={result.confidence} size={140} />
-          <RecognitionStageBadge confidence={result.confidence} />
-          {result.locked && result.found ? (
-            <View style={styles.lockedBox}>
-              <Text style={styles.lockedTitle}>We Found Your Match!</Text>
-              <Text style={styles.lockedSub}>
-                Identified with {result.confidence}% confidence.
-              </Text>
-              <View style={styles.lockedBlurLines}>
-                <View style={[styles.blurLine, { width: "75%", height: 22 }]} />
-                <View style={[styles.blurLine, { width: "50%", height: 14 }]} />
-                <View style={[styles.blurLine, { width: "65%", height: 10, opacity: 0.5 }]} />
-              </View>
-              <View style={styles.lockedHintRow}>
-                <Ionicons name="lock-closed" size={14} color="#b794ff" />
-                <Text style={styles.lockedHintText}>
-                  Title, cast, platform & details are hidden
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => { Haptics.selectionAsync(); router.push("/paywall"); }}
-                style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1, width: "100%" }]}
-              >
-                <LinearGradient
-                  colors={["#884dff", "#7c3aed"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.unlockBtn}
-                >
-                  <Text style={styles.unlockBtnText}>Unlock the Answer — ₹799/year</Text>
-                </LinearGradient>
-              </Pressable>
-              <Text style={styles.lockedFootnote}>
-                Billed yearly · Cancel anytime
-              </Text>
-            </View>
-          ) : (
+          <View style={styles.ringColumn}>
+            <ConfidenceRing confidence={result.confidence} size={140} />
+            <RecognitionStageBadge confidence={result.confidence} />
+          </View>
           <View style={styles.heroInfo}>
             {result.found ? (
               <>
@@ -240,7 +206,6 @@ export default function ResultScreen() {
               </>
             )}
           </View>
-          )}
         </View>
 
         <View style={styles.cards}>
@@ -383,40 +348,10 @@ const styles = StyleSheet.create({
     paddingBottom: 28,
     overflow: "hidden",
   },
+  ringColumn: {
+    alignItems: "center",
+  },
   heroInfo: { flex: 1, gap: 8 },
-  lockedBox: {
-    width: "100%",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 24,
-    paddingTop: 8,
-  },
-  lockedTitle: { color: "#fff", fontSize: 22, fontWeight: "800", textAlign: "center" },
-  lockedSub: { color: "rgba(255,255,255,0.6)", fontSize: 14, textAlign: "center" },
-  lockedBlurLines: {
-    width: "100%",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(136,77,255,0.3)",
-    backgroundColor: "rgba(136,77,255,0.06)",
-  },
-  blurLine: {
-    borderRadius: 6,
-    backgroundColor: "rgba(255,255,255,0.12)",
-  },
-  lockedHintRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  lockedHintText: { color: "rgba(255,255,255,0.6)", fontSize: 13 },
-  unlockBtn: {
-    width: "100%",
-    borderRadius: 14,
-    paddingVertical: 15,
-    alignItems: "center",
-  },
-  unlockBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  lockedFootnote: { color: "rgba(255,255,255,0.4)", fontSize: 12 },
   heroTitle: { fontSize: 20, fontWeight: "700", lineHeight: 26 },
   heroSubtitle: { fontSize: 14 },
   metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },

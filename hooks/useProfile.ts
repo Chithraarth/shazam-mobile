@@ -7,10 +7,31 @@ export function apiBase(): string {
   return domain ? `https://${domain}` : "";
 }
 
+const REQUEST_TIMEOUT_MS = 15000;
+
+// Without this, a stalled getIdToken() refresh or a hung network request
+// leaves react-query's isLoading stuck true forever, which the (tabs) guard
+// treats as "still checking" with no path to the existing error/retry screen.
+function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), REQUEST_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 export type Profile = {
   id: string;
   email: string | null;
-  hasActiveSubscription: boolean;
+  scansRemaining: number;
   country: string | null;
   language: string | null;
   contentRegions: string[];
@@ -21,15 +42,25 @@ export function useAuthedFetch() {
   const { user } = useAuth();
   return useCallback(
     async (path: string, init?: RequestInit) => {
-      const token = await user?.getIdToken();
-      return fetch(`${apiBase()}${path}`, {
-        ...init,
-        headers: {
-          "Content-Type": "application/json",
-          ...(init?.headers as Record<string, string>),
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
+      const token = user
+        ? await withTimeout(user.getIdToken(), "Timed out refreshing your sign-in")
+        : undefined;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        return await fetch(`${apiBase()}${path}`, {
+          ...init,
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            ...(init?.headers as Record<string, string>),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+      } finally {
+        clearTimeout(timer);
+      }
     },
     [user]
   );
@@ -41,6 +72,7 @@ export function useProfile() {
   return useQuery<Profile>({
     queryKey: ["profile"],
     enabled: !!isSignedIn,
+    retry: 1,
     queryFn: async () => {
       const res = await authedFetch("/api/user/me");
       if (!res.ok) throw new Error(`Failed to load profile (${res.status})`);

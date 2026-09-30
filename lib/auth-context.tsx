@@ -15,13 +15,44 @@ import { auth } from "@/lib/firebase";
 import { setAuthTokenGetter } from "@/lib/api-client";
 
 let GoogleSignin: any = null;
+let googleStatusCodes: any = null;
 if (Platform.OS !== "web") {
   try {
-    GoogleSignin = require("@react-native-google-signin/google-signin").GoogleSignin;
+    const googleSigninModule = require("@react-native-google-signin/google-signin");
+    GoogleSignin = googleSigninModule.GoogleSignin;
+    googleStatusCodes = googleSigninModule.statusCodes;
     GoogleSignin.configure({
       webClientId: "816984918533-j0bd7p6en1le1ki4j971hrbsjqtfiusp.apps.googleusercontent.com",
     });
   } catch {}
+}
+
+// Normalizes @react-native-google-signin's native status codes (which don't
+// share Firebase's "auth/..." namespace) into codes firebaseErrorMessage()
+// can recognize, so failures don't all collapse into "Something went wrong."
+function normalizeGoogleSignInError(err: any): Error {
+  const code = err?.code;
+  if (googleStatusCodes && code === googleStatusCodes.SIGN_IN_CANCELLED) {
+    return Object.assign(new Error("Sign-in was cancelled."), { code: "auth/popup-closed-by-user" });
+  }
+  if (googleStatusCodes && code === googleStatusCodes.IN_PROGRESS) {
+    return Object.assign(new Error("Sign-in already in progress."), { code: "auth/cancelled-popup-request" });
+  }
+  if (googleStatusCodes && code === googleStatusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+    return Object.assign(
+      new Error("Google Play Services is required for Google sign-in."),
+      { code: "auth/operation-not-supported-in-this-environment" },
+    );
+  }
+  if (code === "DEVELOPER_ERROR" || code === 10) {
+    return Object.assign(
+      new Error(
+        "Google sign-in is misconfigured for this app build (missing/incorrect Android OAuth client or SHA-1 fingerprint).",
+      ),
+      { code: "auth/operation-not-allowed" },
+    );
+  }
+  return err instanceof Error ? err : new Error(String(err?.message ?? err));
 }
 
 type AuthContextValue = {
@@ -60,12 +91,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isSignedIn: !!user,
     signInWithGoogle: async () => {
       if (!GoogleSignin) throw new Error("Google sign-in is not available on this platform");
-      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-      const result = await GoogleSignin.signIn();
-      const idToken = result.data?.idToken ?? result.idToken;
-      if (!idToken) throw new Error("Google sign-in did not return an ID token");
-      const credential = GoogleAuthProvider.credential(idToken);
-      await signInWithCredential(auth, credential);
+      try {
+        await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+        const result = await GoogleSignin.signIn();
+        const idToken = result.data?.idToken ?? result.idToken;
+        if (!idToken) throw new Error("Google sign-in did not return an ID token");
+        // @react-native-firebase/auth's Android native module requires a non-empty
+        // accessToken alongside the idToken, or it throws IllegalArgumentException
+        // synchronously (crashing the app, since it happens outside the JS try/catch).
+        const { accessToken } = await GoogleSignin.getTokens();
+        const credential = GoogleAuthProvider.credential(idToken, accessToken);
+        await signInWithCredential(auth, credential);
+      } catch (err) {
+        throw normalizeGoogleSignInError(err);
+      }
     },
     signInWithEmail: async (email, password) => {
       await signInWithEmailAndPassword(auth, email, password);

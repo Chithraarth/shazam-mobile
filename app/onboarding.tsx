@@ -45,7 +45,7 @@ const REGIONS = [
   { key: "Korean (K-Drama)", icon: "🇰🇷" },
   { key: "Japanese / Anime", icon: "🇯🇵" },
   { key: "Chinese (C-Drama)", icon: "🇨🇳" },
-  { key: "South Indian (Tamil/Telugu)", icon: "🎬" },
+  { key: "South Indian", icon: "🎬" },
   { key: "Turkish Dramas", icon: "🇹🇷" },
   { key: "Spanish / Latin American", icon: "🌎" },
   { key: "European Cinema", icon: "🇪🇺" },
