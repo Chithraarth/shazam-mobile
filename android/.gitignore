@@ -18,3 +18,4 @@ local.properties
 # Release signing — never commit the real upload key or its passwords
 app/release.keystore
 keystore.properties
+.kotlin/
