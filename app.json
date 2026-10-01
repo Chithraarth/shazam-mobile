@@ -67,6 +67,7 @@
           "iosUrlScheme": "com.googleusercontent.apps.816984918533-vbt1bm34gtki8em3e3hdm69dle406mjd"
         }
       ],
+      "./plugins/with-ios-27.js",
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
       "expo-localization",
@@ -104,7 +105,20 @@
           ]
         }
       ],
-      "expo-quick-actions"
+      "expo-quick-actions",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static",
+            "forceStaticLinking": [
+              "RNFBApp",
+              "RNFBAuth",
+              "RNFBMessaging"
+            ]
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
