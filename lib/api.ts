@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import * as Application from "expo-application";
+import * as Localization from "expo-localization";
 import { Platform } from "react-native";
 import { apiBase, useAuthedFetch } from "@/hooks/useProfile";
 import type { IdentifyResult } from "@/lib/scan-types";
+
+const deviceRegion = () => Localization.getLocales()[0]?.regionCode ?? "IN";
 
 export class ApiError extends Error {
   constructor(readonly code: "out_of_scans" | "unauthorized" | "failed" | "offline", message: string) {
@@ -17,7 +20,7 @@ export function useIdentify() {
     try {
       res = await authedFetch("/api/identify", {
         method: "POST",
-        body: JSON.stringify({ imageData, mimeType: "image/jpeg" }),
+        body: JSON.stringify({ imageData, mimeType: "image/jpeg", region: deviceRegion() }),
       });
     } catch {
       throw new ApiError("offline", "We couldn’t reach Videofy. Check your connection — nothing was charged.");
@@ -59,6 +62,46 @@ export function useDeleteAccountRequest() {
     const res = await authedFetch("/api/user/me", { method: "DELETE" });
     if (!res.ok) throw new Error("Couldn’t delete your account. Please try again.");
   };
+}
+
+export type PersonInfo = {
+  id: number;
+  name: string;
+  profileUrl: string | null;
+  knownFor: { id: number; mediaType: "movie" | "tv"; title: string; year: number | null; posterUrl: string | null; character: string | null }[];
+};
+
+export function usePerson(id: number | null | undefined) {
+  const authedFetch = useAuthedFetch();
+  return useQuery<PersonInfo>({
+    queryKey: ["person", id],
+    enabled: !!id,
+    staleTime: 24 * 60 * 60 * 1000,
+    queryFn: async () => {
+      const res = await authedFetch(`/api/catalog/person/${id}`);
+      if (!res.ok) throw new Error("Couldn’t load this person.");
+      return res.json();
+    },
+  });
+}
+
+export type SeasonInfo = {
+  season: number;
+  episodes: { number: number; name: string; overview: string | null; airDate: string | null; runtime: number | null; stillUrl: string | null }[];
+};
+
+export function useSeason(tvId: number | null | undefined, season: number | null | undefined) {
+  const authedFetch = useAuthedFetch();
+  return useQuery<SeasonInfo>({
+    queryKey: ["season", tvId, season],
+    enabled: !!tvId && season != null,
+    staleTime: 24 * 60 * 60 * 1000,
+    queryFn: async () => {
+      const res = await authedFetch(`/api/catalog/tv/${tvId}/season/${season}`);
+      if (!res.ok) throw new Error("Couldn’t load episodes.");
+      return res.json();
+    },
+  });
 }
 
 type AppConfig = { minAndroidVersionCode?: number; minIosBuild?: number };

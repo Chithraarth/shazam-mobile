@@ -4,12 +4,13 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as StoreReview from "expo-store-review";
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Linking, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useProfile } from "@/hooks/useProfile";
+import { usePerson } from "@/lib/api";
 import { useHistory } from "@/lib/history-store";
 import { emailSupport, openTrailer, openWatch, openWebSearch } from "@/lib/links";
-import { CastMember, confidenceLabel, IdentifyResult, TYPE_LABELS } from "@/lib/scan-types";
+import { confidenceLabel, IdentifyResult, Provider, TYPE_LABELS } from "@/lib/scan-types";
 import { useSettings } from "@/lib/settings";
 import {
   BottomSheet,
@@ -24,6 +25,7 @@ import {
   Radio,
   RingAvatar,
   Screen,
+  Skeleton,
   Sticker,
   TextLink,
   Toast,
@@ -160,23 +162,70 @@ function ReportSheet({ visible, onClose, result, onSent }: { visible: boolean; o
   );
 }
 
-function CastSheet({ member, onClose }: { member: CastMember | null; onClose: () => void }) {
+type Person = { name: string; character?: string | null; role?: string | null; id?: number; profileUrl?: string | null };
+
+function CastSheet({ member, onClose }: { member: Person | null; onClose: () => void }) {
+  const t = useTheme();
+  const { data: person, isLoading } = usePerson(member?.id);
   return (
     <BottomSheet visible={!!member} onClose={onClose}>
       {member ? (
-        <View style={{ alignItems: "center", gap: 12 }}>
-          <RingAvatar name={member.name} size={96} />
+        <ScrollView contentContainerStyle={{ alignItems: "center", gap: 12 }} showsVerticalScrollIndicator={false}>
+          <RingAvatar name={member.name} uri={person?.profileUrl ?? member.profileUrl} size={104} />
           <Txt variant="title" size={26} center>{member.name}</Txt>
           {member.character || member.role ? (
             <Chip label={[member.character ? `Plays ${member.character}` : null, member.role].filter(Boolean).join(" · ")} small />
           ) : null}
+          {member.id ? (
+            <View style={{ alignSelf: "stretch", gap: 10, marginTop: 6 }}>
+              <Txt variant="overline">Also in</Txt>
+              {isLoading ? (
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  {[0, 1, 2].map((i) => <Skeleton key={i} width={104} height={150} radius={16} />)}
+                </View>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+                  {(person?.knownFor ?? []).map((k) => (
+                    <Pressable key={`${k.mediaType}${k.id}`} onPress={() => openWebSearch(`${k.title} ${k.year ?? ""}`)} style={{ width: 104, gap: 4 }}>
+                      <Poster uri={k.posterUrl} seed={k.title} style={{ height: 150 }} />
+                      <Text numberOfLines={2} style={{ fontFamily: fonts.body[800], fontSize: 12, color: t.ink }}>{k.title}</Text>
+                      {k.year ? <Txt variant="caption" style={{ fontSize: 11 }}>{k.year}</Txt> : null}
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          ) : null}
           <View style={{ alignSelf: "stretch", gap: 8, marginTop: 8 }}>
-            <Button title={`More with ${member.name.split(" ")[0]}`} onPress={() => openWebSearch(`${member.name} movies and shows`)} />
-            <Button title="Close" variant="secondary" onPress={onClose} />
+            <Button title={`More about ${member.name.split(" ")[0]}`} variant="secondary" onPress={() => openWebSearch(member.name)} />
           </View>
-        </View>
+        </ScrollView>
       ) : null}
     </BottomSheet>
+  );
+}
+
+function ProviderRow({ label, providers, onPress }: { label: string; providers: Provider[]; onPress: (p: Provider) => void }) {
+  const t = useTheme();
+  if (!providers.length) return null;
+  return (
+    <View style={{ gap: 8 }}>
+      <Txt variant="caption" style={{ fontFamily: fonts.body[800] }}>{label}</Txt>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {providers.map((p) => (
+          <Pressable
+            key={p.id}
+            accessibilityRole="link"
+            accessibilityLabel={`${label} on ${p.name}`}
+            onPress={() => onPress(p)}
+            style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 4, paddingRight: 14, height: 44, borderRadius: 22, backgroundColor: t.surface2, opacity: pressed ? 0.75 : 1 })}
+          >
+            {p.logoUrl ? <Image source={{ uri: p.logoUrl }} style={{ width: 36, height: 36, borderRadius: 18 }} /> : <View style={{ width: 8 }} />}
+            <Text style={{ fontFamily: fonts.body[800], fontSize: 14, color: t.ink }}>{p.name}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -192,7 +241,7 @@ export default function ResultScreen() {
   const result = item?.result;
   const [confirmed, setConfirmed] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
-  const [castOpen, setCastOpen] = useState<CastMember | null>(null);
+  const [castOpen, setCastOpen] = useState<Person | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [rateOpen, setRateOpen] = useState(false);
 
@@ -235,7 +284,17 @@ export default function ResultScreen() {
   }
 
   const title = result.title ?? result.creator ?? "Untitled";
-  const meta = [result.type ? TYPE_LABELS[result.type] ?? result.type : null, result.year, result.language, result.genre].filter(Boolean) as (string | number)[];
+  const cat = result.catalog;
+  const runtime = cat?.runtimeMinutes ? `${Math.floor(cat.runtimeMinutes / 60) ? `${Math.floor(cat.runtimeMinutes / 60)}h ` : ""}${cat.runtimeMinutes % 60}m` : null;
+  const meta = [result.type ? TYPE_LABELS[result.type] ?? result.type : null, result.year ?? cat?.year, result.language, runtime, result.genre].filter(Boolean) as (string | number)[];
+  const heroUri = cat?.backdropUrl ?? cat?.posterUrl ?? item.thumbUri;
+  const cast: Person[] = cat?.cast.length
+    ? cat.cast.map((c) => ({ id: c.id, name: c.name, character: c.character, profileUrl: c.profileUrl }))
+    : result.cast ?? [];
+  const watch = cat?.watch;
+  const hasProviders = !!watch && watch.stream.length + watch.rent.length + watch.buy.length > 0;
+  const openProvider = (p: Provider) => (watch?.link ? Linking.openURL(watch.link) : openWatch(p.name, title));
+  const playTrailer = () => (cat?.trailerKey ? Linking.openURL(`https://www.youtube.com/watch?v=${cat.trailerKey}`) : openTrailer(title, result.year));
   const ep = result.episode;
   const hasEpisode = !!ep && (ep.season != null || ep.episode != null);
   const crew = [
@@ -250,13 +309,16 @@ export default function ResultScreen() {
     <View style={{ flex: 1, backgroundColor: t.bg }}>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
         <View style={{ height: 400 }}>
-          <Poster uri={item.thumbUri} seed={title} style={{ flex: 1, borderRadius: 0 }} />
+          <Poster uri={heroUri} seed={title} style={{ flex: 1, borderRadius: 0 }} />
           <LinearGradient colors={["transparent", t.bg]} style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 140 }} />
           <View style={{ position: "absolute", left: 18, right: 18, top: insets.top + 12, flexDirection: "row", justifyContent: "space-between" }}>
             <IconButton icon="close" label="Close" variant="glass" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} />
             <IconButton icon="share-outline" label="Share" variant="glass" onPress={() => router.push({ pathname: "/share", params: { id: item.id } })} />
           </View>
           <Sticker label={`${result.confidence}% MATCH`} size={15} style={{ position: "absolute", right: 22, bottom: 40 }} />
+          {cat?.backdropUrl && cat.posterUrl ? (
+            <Poster uri={cat.posterUrl} seed={title} style={{ position: "absolute", left: 20, bottom: 24, width: 92, height: 136, borderWidth: 3, borderColor: t.bg }} />
+          ) : null}
         </View>
 
         <View style={{ paddingHorizontal: 20, marginTop: -20, gap: 14 }}>
@@ -284,7 +346,15 @@ export default function ResultScreen() {
             </Pressable>
           ) : null}
 
-          {result.platform ? (
+          {hasProviders && watch ? (
+            <Card padded style={{ gap: 14 }}>
+              <Txt variant="overline" color="accent">Where to watch</Txt>
+              <ProviderRow label="Stream" providers={watch.stream} onPress={openProvider} />
+              <ProviderRow label="Rent" providers={watch.rent} onPress={openProvider} />
+              <ProviderRow label="Buy" providers={watch.buy} onPress={openProvider} />
+              <Txt variant="caption" style={{ fontSize: 11 }}>Availability data from JustWatch</Txt>
+            </Card>
+          ) : result.platform ? (
             <View style={{ flexDirection: "row", gap: 8 }}>
               <Button title={`Watch on ${result.platform}`} icon="play" onPress={() => openWatch(result.platform!, title)} style={{ flex: 1 }} height={50} />
             </View>
@@ -297,18 +367,18 @@ export default function ResultScreen() {
               active={item.saved}
               onPress={() => { history.toggleSaved(item.id); haptics.success(); setToast(item.saved ? "Removed from Saved" : "Saved for later"); }}
             />
-            <Action icon="play-outline" label="Trailer" onPress={() => openTrailer(title, result.year)} />
+            <Action icon="play-outline" label="Trailer" onPress={playTrailer} />
             <Action icon="phone-portrait-outline" label="Story" onPress={() => router.push({ pathname: "/share", params: { id: item.id } })} />
             <Action icon="help-circle-outline" label="Not it?" onPress={() => setReportOpen(true)} />
           </View>
 
-          {result.cast && result.cast.length ? (
+          {cast.length ? (
             <>
               <Txt variant="overline">Cast</Txt>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
-                {result.cast.map((m) => (
-                  <Pressable key={m.name} accessibilityRole="button" accessibilityLabel={m.name} onPress={() => setCastOpen(m)} style={{ width: 72, alignItems: "center", gap: 6 }}>
-                    <RingAvatar name={m.name} size={56} />
+                {cast.map((m) => (
+                  <Pressable key={`${m.id ?? ""}${m.name}`} accessibilityRole="button" accessibilityLabel={m.name} onPress={() => setCastOpen(m)} style={{ width: 72, alignItems: "center", gap: 6 }}>
+                    <RingAvatar name={m.name} uri={m.profileUrl} size={56} />
                     <Text numberOfLines={2} style={{ fontFamily: fonts.body[700], fontSize: 11, color: t.ink, textAlign: "center" }}>{m.name}</Text>
                   </Pressable>
                 ))}

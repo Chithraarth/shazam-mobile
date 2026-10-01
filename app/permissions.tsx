@@ -4,7 +4,9 @@ import React from "react";
 import { Linking, Text, View } from "react-native";
 import { useProfile } from "@/hooks/useProfile";
 import { SCANS_PER_PACK, useBilling } from "@/lib/billing";
-import { Button, Card, HeroIcon, ListRow, Screen, TextLink, Toggle, Txt } from "@/ui/components";
+import { usePushControls } from "@/lib/push";
+import { useSettings } from "@/lib/settings";
+import { Button, Card, Divider, HeroIcon, ListRow, Screen, TextLink, Toggle, Txt } from "@/ui/components";
 import { fonts, useTheme } from "@/ui/theme";
 
 // Screen H: last onboarding step. Asks for the camera up front (with context)
@@ -17,6 +19,8 @@ export default function Permissions() {
   const { priceText } = useBilling();
   const granted = !!permission?.granted;
   const hasScans = (profile?.scansRemaining ?? 0) > 0;
+  const { settings } = useSettings();
+  const push = usePushControls();
 
   const toggleCamera = async () => {
     if (granted) return;
@@ -34,7 +38,7 @@ export default function Permissions() {
         <Txt variant="title" center>
           You’re <Txt variant="title" color="accent">all set!</Txt>
         </Txt>
-        <Txt center>One quick permission and you’re ready to scan.</Txt>
+        <Txt center>Two quick permissions and you’re ready to scan.</Txt>
       </View>
 
       <Card>
@@ -43,6 +47,13 @@ export default function Permissions() {
           title="Camera"
           subtitle={granted ? "Allowed — one photo when you tap Scan" : "One photo when you tap Scan. No video, no sound."}
           right={<Toggle value={granted} onChange={toggleCamera} label="Allow camera" />}
+        />
+        <Divider />
+        <ListRow
+          icon="notifications-outline"
+          title="Notifications"
+          subtitle="Only for payments and refunds"
+          right={<Toggle value={settings.pushEnabled} onChange={(on) => (on ? push.enable() : push.disable())} label="Payment notifications" />}
         />
       </Card>
 

@@ -1,6 +1,8 @@
+import * as QuickActions from "expo-quick-actions";
+import { useQuickActionRouting } from "expo-quick-actions/router";
 import { Redirect, Tabs } from "expo-router";
-import React from "react";
-import { View } from "react-native";
+import React, { useEffect } from "react";
+import { Platform, View } from "react-native";
 import { useProfile } from "@/hooks/useProfile";
 import { useAuth } from "@/lib/auth-context";
 import { useSettings } from "@/lib/settings";
@@ -14,6 +16,19 @@ export default function TabLayout() {
   const { isLoaded, isSignedIn, signOut } = useAuth();
   const { settings } = useSettings();
   const { data: profile, isLoading, isError, error, refetch, isRefetching } = useProfile();
+
+  // Long-press shortcuts on the app icon (design screen 44).
+  useQuickActionRouting();
+  useEffect(() => {
+    // SF Symbols exist only on iOS; Android shortcuts use the app icon.
+    const icon = (name: string) => (Platform.OS === "ios" ? `symbol:${name}` : null);
+    QuickActions.setItems([
+      { id: "camera", title: "Scan with camera", icon: icon("camera"), params: { href: "/?action=camera" } },
+      { id: "photo", title: "Scan a screenshot", icon: icon("photo"), params: { href: "/?action=photo" } },
+      { id: "recording", title: "Scan a recording", icon: icon("record.circle"), params: { href: "/scan/recording-guide" } },
+      { id: "history", title: "Recent scans", icon: icon("clock"), params: { href: "/history" } },
+    ]).catch(() => {});
+  }, []);
 
   if (!isLoaded || (isSignedIn && isLoading)) return <Splash busy />;
   if (!isSignedIn) return <Redirect href={settings.introSeen ? "/sign-in" : "/welcome"} />;

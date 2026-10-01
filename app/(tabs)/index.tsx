@@ -1,16 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
-import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useRef, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useProfile } from "@/hooks/useProfile";
+import { checkFrameQuality, FrameQuality } from "@/lib/frame-quality";
 import { prepareImage } from "@/lib/image";
 import { useIsOnline } from "@/lib/network";
 import { setPendingFrame } from "@/lib/scan-session";
 import { registerScanTrigger } from "@/lib/scan-trigger";
-import { Button, Chip, Gradient, HeroIcon, IconButton, OfflineBanner, TextLink, Txt } from "@/ui/components";
+import { Image } from "expo-image";
+import { BottomSheet, Button, Chip, Gradient, HeroIcon, IconButton, OfflineBanner, Sticker, TextLink, Txt } from "@/ui/components";
 import { fonts, useHaptics, useTheme } from "@/ui/theme";
 
 type Mode = "photo" | "camera" | "recording";
@@ -54,6 +56,9 @@ export default function ScanScreen() {
   const [torch, setTorch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A captured frame that looked too dark or blurry, waiting for the user
+  // to retake it or scan it anyway (design screen 24).
+  const [weak, setWeak] = useState<{ photo: { uri: string; width: number; height: number }; quality: FrameQuality } | null>(null);
 
   const scansLeft = profile?.scansRemaining ?? 0;
   const granted = !!permission?.granted;
@@ -74,6 +79,15 @@ export default function ScanScreen() {
     return true;
   }, [online, scansLeft, router, haptics]);
 
+  const identifyPhoto = useCallback(
+    async (photo: { uri: string; width: number; height: number }) => {
+      const frame = await prepareImage(photo.uri, photo.width, photo.height);
+      setPendingFrame({ ...frame, source: "camera" });
+      router.push("/identifying");
+    },
+    [router],
+  );
+
   const capture = useCallback(async () => {
     if (busy || !preflight()) return;
     if (!granted || !cameraRef.current) return;
@@ -93,16 +107,20 @@ export default function ScanScreen() {
         }
       }
       if (!photo) throw lastErr ?? new Error("Camera capture failed");
-      const frame = await prepareImage(photo.uri, photo.width, photo.height);
-      setPendingFrame({ ...frame, source: "camera" });
-      router.push("/identifying");
+      const quality = await checkFrameQuality(photo.uri);
+      if (quality && (quality.dark || quality.blurry)) {
+        haptics.warning();
+        setWeak({ photo, quality });
+        return;
+      }
+      await identifyPhoto(photo);
     } catch {
       haptics.error();
       setError("Camera wasn’t ready — try again, or upload a photo instead.");
     } finally {
       setBusy(false);
     }
-  }, [busy, preflight, granted, ready, router, haptics]);
+  }, [busy, preflight, granted, ready, haptics, identifyPhoto]);
 
   const pickPhoto = useCallback(async () => {
     if (busy || !preflight()) return;
@@ -129,6 +147,15 @@ export default function ScanScreen() {
       return () => registerScanTrigger(null);
     }, [granted, capture, pickPhoto]),
   );
+
+  // Shortcuts and the widget open this screen with ?action=photo|camera.
+  const { action } = useLocalSearchParams<{ action?: string }>();
+  useEffect(() => {
+    if (action === "photo") {
+      router.setParams({ action: undefined });
+      pickPhoto();
+    }
+  }, [action]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onMode = (m: Mode) => {
     haptics.tap();
@@ -208,8 +235,48 @@ export default function ScanScreen() {
     );
   }
 
+  const weakSheet = (
+    <BottomSheet visible={!!weak} onClose={() => setWeak(null)}>
+      {weak ? (
+        <>
+          <View style={{ height: 200, borderRadius: 24, overflow: "hidden", backgroundColor: "#000" }}>
+            <Image source={{ uri: weak.photo.uri }} style={{ flex: 1 }} contentFit="cover" />
+            <Sticker label={weak.quality.dark ? "TOO DARK" : "BLURRY"} style={{ position: "absolute", left: 14, top: 14 }} />
+          </View>
+          <Txt variant="title" size={24}>
+            {weak.quality.dark ? "Hard to see " : "A bit "}
+            <Txt variant="title" size={24} color="accent">{weak.quality.dark ? "this one" : "blurry"}</Txt>
+          </Txt>
+          <Txt>
+            {weak.quality.dark
+              ? "The frame is very dark, so we may not find a match. Turn on the flash or move closer, then retake."
+              : "Hold steady and fill the frame with the screen for a sharper shot."}
+          </Txt>
+          <Button
+            title={weak.quality.dark && !torch && facing === "back" ? "Turn on flash & retake" : "Retake"}
+            onPress={() => {
+              if (weak.quality.dark && facing === "back") setTorch(true);
+              setWeak(null);
+            }}
+          />
+          <Button
+            title="Scan anyway · uses 1 scan"
+            variant="secondary"
+            onPress={async () => {
+              const photo = weak.photo;
+              setWeak(null);
+              setBusy(true);
+              try { await identifyPhoto(photo); } finally { setBusy(false); }
+            }}
+          />
+        </>
+      ) : null}
+    </BottomSheet>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: "#000" }}>
+      {weakSheet}
       {focused ? (
         <CameraView
           ref={cameraRef}

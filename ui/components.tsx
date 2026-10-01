@@ -517,14 +517,16 @@ export function initials(name: string): string {
     .join("");
 }
 
-export function RingAvatar({ name, size = 56, icon }: { name?: string; size?: number; icon?: IconName }) {
+export function RingAvatar({ name, size = 56, icon, uri }: { name?: string; size?: number; icon?: IconName; uri?: string | null }) {
   const t = useTheme();
   const tint = name ? AVATAR_TINTS[hash(name) % AVATAR_TINTS.length] : t.surface2;
   return (
     <Gradient style={{ padding: 3, borderRadius: (size + 12) / 2 }}>
       <View style={{ padding: 3, borderRadius: (size + 6) / 2, backgroundColor: t.bg }}>
-        <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: tint, alignItems: "center", justifyContent: "center" }}>
-          {icon ? (
+        <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: tint, alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+          {uri ? (
+            <Image source={{ uri }} style={{ width: size, height: size }} contentFit="cover" transition={150} />
+          ) : icon ? (
             <Ionicons name={icon} size={size * 0.45} color={t.ink} />
           ) : (
             <Text style={{ fontFamily: fonts.body[800], fontSize: size * 0.32, color: "#16111F" }}>{initials(name ?? "")}</Text>

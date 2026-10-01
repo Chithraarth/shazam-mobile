@@ -36,6 +36,9 @@ export default function About() {
         <Divider />
         <ListRow title="Contact support" chevron onPress={() => emailSupport("Videofy feedback")} />
       </Card>
+      <Txt variant="caption" center style={{ fontSize: 11 }}>
+        Movie and TV data from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability from JustWatch.
+      </Txt>
     </Screen>
   );
 }

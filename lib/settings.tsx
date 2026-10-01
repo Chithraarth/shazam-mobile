@@ -10,6 +10,8 @@ export type Settings = {
   introSeen: boolean;
   // Set once the in-app rating prompt has been shown, so it never nags.
   ratePrompted: boolean;
+  // Payment notifications (credited / refunded). Off until the user opts in.
+  pushEnabled: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -18,6 +20,7 @@ const DEFAULTS: Settings = {
   keepThumbnails: true,
   introSeen: false,
   ratePrompted: false,
+  pushEnabled: false,
 };
 
 const STORAGE_KEY = "@videofy/settings";

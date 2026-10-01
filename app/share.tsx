@@ -6,7 +6,7 @@ import { Share, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { captureRef } from "react-native-view-shot";
 import { useHistory } from "@/lib/history-store";
-import { TYPE_LABELS } from "@/lib/scan-types";
+import { posterFor, TYPE_LABELS } from "@/lib/scan-types";
 import { Button, Gradient, Poster, Sticker, TopBar } from "@/ui/components";
 import { fonts } from "@/ui/theme";
 
@@ -49,7 +49,7 @@ export default function ShareScreen() {
           collapsable={false}
           style={{ width: 270, height: 470, borderRadius: 30, backgroundColor: "#0D0B14", overflow: "hidden", transform: [{ rotate: "-3deg" }] }}
         >
-          <Poster uri={item?.thumbUri} seed={title} style={{ height: 300, borderRadius: 0 }} />
+          <Poster uri={result ? posterFor(result, item?.thumbUri) : null} seed={title} style={{ height: 300, borderRadius: 0 }} />
           {result?.found ? <Sticker label={`${result.confidence}% MATCH`} style={{ position: "absolute", right: 16, top: 270 }} /> : null}
           <View style={{ padding: 18, gap: 6 }}>
             <Text numberOfLines={2} style={{ fontFamily: fonts.display[700], fontSize: 22, lineHeight: 26, color: "#fff" }}>{title}</Text>

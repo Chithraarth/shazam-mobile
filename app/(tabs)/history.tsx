@@ -5,7 +5,7 @@ import { FlatList, Pressable, Text, useWindowDimensions, View } from "react-nati
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useProfile } from "@/hooks/useProfile";
 import { HistoryItem, useHistory } from "@/lib/history-store";
-import { kindOf, ScanKind } from "@/lib/scan-types";
+import { kindOf, posterFor, ScanKind } from "@/lib/scan-types";
 import { Button, Card, Checkbox, Chip, Dialog, Gradient, IconButton, Poster, SearchField, Skeleton, Sticker, TextLink, Toast, Txt } from "@/ui/components";
 import { fonts, useHaptics, useTheme } from "@/ui/theme";
 
@@ -118,7 +118,7 @@ export default function HistoryScreen() {
         style={{ width: tile, height: tile * 1.5 }}
       >
         {r.found ? (
-          <Poster uri={item.thumbUri} seed={r.title ?? item.id} style={{ flex: 1, borderRadius: 14, borderWidth: isSel ? 3 : 0, borderColor: t.pink, opacity: selecting && !isSel ? 0.6 : 1 }}>
+          <Poster uri={posterFor(r, item.thumbUri)} seed={r.title ?? item.id} style={{ flex: 1, borderRadius: 14, borderWidth: isSel ? 3 : 0, borderColor: t.pink, opacity: selecting && !isSel ? 0.6 : 1 }}>
             <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: 8, paddingTop: 24, backgroundColor: "rgba(0,0,0,0.35)" }}>
               <Text numberOfLines={1} style={{ fontFamily: fonts.body[800], fontSize: 11, color: "#fff" }}>{r.title ?? r.creator ?? ""}</Text>
             </View>

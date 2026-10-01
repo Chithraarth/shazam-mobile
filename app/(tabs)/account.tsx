@@ -5,6 +5,7 @@ import { useProfile } from "@/hooks/useProfile";
 import { useAuth } from "@/lib/auth-context";
 import { SCANS_PER_PACK, useBilling } from "@/lib/billing";
 import { useHistory } from "@/lib/history-store";
+import { usePushControls } from "@/lib/push";
 import { Button, Card, Dialog, Divider, IconButton, ListRow, RingAvatar, Screen, Skeleton, Txt } from "@/ui/components";
 import { fonts, useTheme } from "@/ui/theme";
 
@@ -25,6 +26,7 @@ export default function MeScreen() {
   const { items } = useHistory();
   const billing = useBilling();
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const push = usePushControls();
 
   const name = user?.displayName || null;
   const contact = profile?.email ?? user?.email ?? user?.phoneNumber ?? "Signed in";
@@ -90,7 +92,7 @@ export default function MeScreen() {
         visible={confirmSignOut}
         title="Sign out?"
         message={`Your ${profile?.scansRemaining ?? 0} scans stay with your account. Sign back in any time.`}
-        primary={{ title: "Sign out", onPress: async () => { setConfirmSignOut(false); await signOut(); } }}
+        primary={{ title: "Sign out", onPress: async () => { setConfirmSignOut(false); await push.disable(true); await signOut(); } }}
         secondary={{ title: "Stay signed in", onPress: () => setConfirmSignOut(false) }}
         onClose={() => setConfirmSignOut(false)}
       />

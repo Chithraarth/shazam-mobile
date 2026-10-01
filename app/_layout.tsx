@@ -17,6 +17,9 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useUpdateRequired } from "@/lib/api";
+import { ShareIntentHandler, WidgetSync } from "@/lib/app-effects";
+import { PushManager } from "@/lib/push";
+import { ShareIntentProvider } from "expo-share-intent";
 import { setBaseUrl } from "@/lib/api-client";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { BillingProvider } from "@/lib/billing";
@@ -87,6 +90,9 @@ function AppShell() {
         <Stack.Screen name="share" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
       </Stack>
       <SessionExpiredDialog />
+      <PushManager />
+      <ShareIntentHandler />
+      <WidgetSync />
     </>
   );
 }
@@ -116,7 +122,9 @@ function Root() {
       <QueryClientProvider client={queryClient}>
         <BillingProvider>
           <HistoryProvider>
-            <AppShell />
+            <ShareIntentProvider>
+              <AppShell />
+            </ShareIntentProvider>
           </HistoryProvider>
         </BillingProvider>
       </QueryClientProvider>
