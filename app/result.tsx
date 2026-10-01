@@ -1,407 +1,382 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
+import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React from "react";
-import {
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import * as StoreReview from "expo-store-review";
+import React, { useEffect, useMemo, useState } from "react";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import ConfidenceRing from "@/components/ConfidenceRing";
-import { useColors } from "@/hooks/useColors";
+import { useProfile } from "@/hooks/useProfile";
+import { useHistory } from "@/lib/history-store";
+import { emailSupport, openTrailer, openWatch, openWebSearch } from "@/lib/links";
+import { CastMember, confidenceLabel, IdentifyResult, TYPE_LABELS } from "@/lib/scan-types";
+import { useSettings } from "@/lib/settings";
+import {
+  BottomSheet,
+  Button,
+  Card,
+  Chip,
+  Divider,
+  HeroIcon,
+  IconButton,
+  IconName,
+  Poster,
+  Radio,
+  RingAvatar,
+  Screen,
+  Sticker,
+  TextLink,
+  Toast,
+  TopBar,
+  Txt,
+} from "@/ui/components";
+import { fonts, useHaptics, useTheme } from "@/ui/theme";
 
-interface CastMember {
-  name: string;
-  role?: string | null;
-  character?: string | null;
-}
+const RATE_AFTER_FOUND = 10;
 
-interface EpisodeInfo {
-  season?: number | null;
-  episode?: number | null;
-  episodeTitle?: string | null;
-}
-
-interface IdentifyResult {
-  found: boolean;
-  confidence: number;
-  title?: string | null;
-  type?: string | null;
-  year?: number | null;
-  platform?: string | null;
-  genre?: string | null;
-  language?: string | null;
-  episode?: EpisodeInfo | null;
-  cast?: CastMember[];
-  director?: string | null;
-  choreographer?: string | null;
-  producer?: string | null;
-  musicDirector?: string | null;
-  country?: string | null;
-  creator?: string | null;
-  creatorHandle?: string | null;
-  synopsis?: string | null;
-  alternativeTitles?: string[];
-  identificationClues?: string | null;
-}
-
-function getPlatformBadgeStyle(platform: string): { bg: string; text: string } {
-  const p = platform.toLowerCase();
-  if (p.includes("netflix")) return { bg: "#dc2626", text: "#fff" };
-  if (p.includes("hbo") || p.includes("max")) return { bg: "#7e22ce", text: "#fff" };
-  if (p.includes("disney")) return { bg: "#1d4ed8", text: "#fff" };
-  if (p.includes("apple")) return { bg: "#374151", text: "#fff" };
-  if (p.includes("amazon") || p.includes("prime")) return { bg: "#0369a1", text: "#fff" };
-  if (p.includes("hulu")) return { bg: "#15803d", text: "#fff" };
-  if (p.includes("paramount")) return { bg: "#1e40af", text: "#fff" };
-  if (p.includes("peacock")) return { bg: "#7c3aed", text: "#fff" };
-  if (p.includes("instagram")) return { bg: "#c2255c", text: "#fff" };
-  if (p.includes("facebook")) return { bg: "#1877f2", text: "#fff" };
-  if (p.includes("tiktok")) return { bg: "#111", text: "#fff" };
-  if (p.includes("youtube")) return { bg: "#dc2626", text: "#fff" };
-  return { bg: "rgba(136,77,255,0.2)", text: "#884dff" };
-}
-
-function getRecognitionStage(confidence: number): {
-  label: string;
-  bg: string;
-  text: string;
-  border: string;
-} {
-  if (confidence >= 80)
-    return { label: "Highly Recognized", bg: "rgba(34,197,94,0.15)", text: "#4ade80", border: "rgba(34,197,94,0.4)" };
-  if (confidence >= 50)
-    return { label: "Moderately Recognized", bg: "rgba(234,179,8,0.15)", text: "#facc15", border: "rgba(234,179,8,0.4)" };
-  return { label: "Low Recognition", bg: "rgba(239,68,68,0.15)", text: "#f87171", border: "rgba(239,68,68,0.4)" };
-}
-
-function RecognitionStageBadge({ confidence }: { confidence: number }) {
-  const stage = getRecognitionStage(confidence);
+function Action({ icon, label, onPress, active }: { icon: IconName; label: string; onPress: () => void; active?: boolean }) {
   return (
-    <View
-      style={[
-        styles.stageBadge,
-        { backgroundColor: stage.bg, borderColor: stage.border },
-      ]}
-    >
-      <Text style={[styles.stageBadgeText, { color: stage.text }]}>{stage.label}</Text>
+    <View style={{ alignItems: "center", gap: 6, width: 72 }}>
+      <IconButton icon={icon} label={label} onPress={onPress} size={54} variant={active ? "grad" : "soft"} />
+      <Txt variant="caption" color="ink" style={{ fontFamily: fonts.body[700], fontSize: 12 }}>{label}</Txt>
     </View>
   );
 }
 
-function PlatformBadge({ platform }: { platform: string }) {
-  const badge = getPlatformBadgeStyle(platform);
+function NoMatch({ thumb }: { thumb?: string | null }) {
+  const router = useRouter();
+  const { data: profile } = useProfile();
   return (
-    <View style={[styles.platformBadge, { backgroundColor: badge.bg }]}>
-      <Text style={[styles.platformBadgeText, { color: badge.text }]}>{platform}</Text>
-    </View>
+    <Screen scroll>
+      <TopBar left="close" onLeft={() => router.replace("/")} />
+      <View style={{ alignItems: "center", gap: 14, marginTop: 10 }}>
+        {thumb ? (
+          <Image source={{ uri: thumb }} style={{ width: 120, height: 120, borderRadius: 32, opacity: 0.6 }} contentFit="cover" />
+        ) : (
+          <HeroIcon icon="help" variant="soft" rotate={-6} />
+        )}
+        <Txt variant="title" center>
+          Hmm, couldn’t <Txt variant="title" color="accent">find it</Txt>
+        </Txt>
+        <Chip label={`${profile?.scansRemaining ?? 0} scans left`} small />
+      </View>
+      <Card>
+        {[
+          "Get a face or subtitles in the frame",
+          "Fill the frame with the screen",
+          "Avoid glare and reflections",
+        ].map((tip, i) => (
+          <View key={tip}>
+            {i > 0 ? <Divider /> : null}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 14, padding: 16 }}>
+              <Txt variant="h3" color="accent" size={16}>{i + 1}</Txt>
+              <Txt variant="strong" style={{ flex: 1 }}>{tip}</Txt>
+            </View>
+          </View>
+        ))}
+      </Card>
+      <View style={{ flex: 1 }} />
+      <Button title="Try again" onPress={() => router.replace("/")} />
+      <TextLink title="Scan a screen recording instead" onPress={() => router.replace("/scan/recording-guide")} />
+    </Screen>
   );
 }
 
-function SectionLabel({ text }: { text: string }) {
-  const colors = useColors();
+function WhichOne({ result, onPick, onNone }: { result: IdentifyResult; onPick: () => void; onNone: () => void }) {
+  const [choice, setChoice] = useState<string>(result.title ?? "");
+  const options = [result.title ?? "", ...(result.alternativeTitles ?? [])].filter(Boolean).slice(0, 4);
   return (
-    <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>{text}</Text>
+    <Screen scroll>
+      <TopBar left="close" />
+      <Txt variant="title">
+        Which one <Txt variant="title" color="accent">is it?</Txt>
+      </Txt>
+      <Txt style={{ marginTop: -6 }}>These look alike. Tap the right one.</Txt>
+      {options.map((title, i) => (
+        <Pressable key={title} accessibilityRole="radio" accessibilityState={{ selected: choice === title }} onPress={() => setChoice(title)}>
+          <Card padded style={{ flexDirection: "row", alignItems: "center", gap: 14, borderWidth: choice === title ? 2.5 : undefined, borderColor: choice === title ? "#E0147A" : undefined }}>
+            <Poster seed={title} style={{ width: 56, height: 82, borderRadius: 14 }} />
+            <View style={{ flex: 1, gap: 4 }}>
+              <Txt variant="strong">{title}</Txt>
+              <Txt variant="caption">{i === 0 ? `Best match · ${result.confidence}%` : "Also possible"}</Txt>
+            </View>
+            <Radio selected={choice === title} />
+          </Card>
+        </Pressable>
+      ))}
+      <View style={{ flex: 1 }} />
+      <Button
+        title={choice === result.title ? "Show details" : `Search “${choice}”`}
+        onPress={() => (choice === result.title ? onPick() : openWebSearch(choice))}
+      />
+      <TextLink title="None of these" onPress={onNone} />
+    </Screen>
+  );
+}
+
+const REPORT_REASONS = ["Wrong title", "Right show, wrong episode", "Wrong cast or details", "Something else"];
+
+function ReportSheet({ visible, onClose, result, onSent }: { visible: boolean; onClose: () => void; result: IdentifyResult; onSent: () => void }) {
+  const t = useTheme();
+  const [reason, setReason] = useState(REPORT_REASONS[0]);
+  const [actual, setActual] = useState("");
+  const send = () => {
+    const body = [
+      `Reason: ${reason}`,
+      `We said: ${result.title ?? "(no match)"}${result.year ? ` (${result.year})` : ""} — ${result.confidence}%`,
+      actual ? `It is actually: ${actual}` : "",
+      result.historyId ? `Scan id: ${result.historyId}` : "",
+    ].filter(Boolean).join("\n");
+    emailSupport("Wrong result on Videofy", body);
+    onClose();
+    onSent();
+  };
+  return (
+    <BottomSheet visible={visible} onClose={onClose}>
+      <Txt variant="title" size={24}>
+        Not the right <Txt variant="title" size={24} color="accent">one?</Txt>
+      </Txt>
+      <Card>
+        {REPORT_REASONS.map((r, i) => (
+          <View key={r}>
+            {i > 0 ? <Divider /> : null}
+            <Pressable accessibilityRole="radio" accessibilityState={{ selected: reason === r }} onPress={() => setReason(r)} style={{ flexDirection: "row", alignItems: "center", gap: 14, padding: 15 }}>
+              <Radio selected={reason === r} />
+              <Txt variant="strong" style={{ flex: 1 }}>{r}</Txt>
+            </Pressable>
+          </View>
+        ))}
+      </Card>
+      <Txt variant="caption" style={{ fontFamily: fonts.body[800] }}>What is it actually? (optional)</Txt>
+      <TextInput
+        value={actual}
+        onChangeText={setActual}
+        placeholder="Title, show or creator"
+        placeholderTextColor={t.muted}
+        style={{ height: 56, borderRadius: 20, backgroundColor: t.surface2, paddingHorizontal: 16, color: t.ink, fontFamily: fonts.body[700], fontSize: 16 }}
+      />
+      <Button title="Send feedback" onPress={send} />
+    </BottomSheet>
+  );
+}
+
+function CastSheet({ member, onClose }: { member: CastMember | null; onClose: () => void }) {
+  return (
+    <BottomSheet visible={!!member} onClose={onClose}>
+      {member ? (
+        <View style={{ alignItems: "center", gap: 12 }}>
+          <RingAvatar name={member.name} size={96} />
+          <Txt variant="title" size={26} center>{member.name}</Txt>
+          {member.character || member.role ? (
+            <Chip label={[member.character ? `Plays ${member.character}` : null, member.role].filter(Boolean).join(" · ")} small />
+          ) : null}
+          <View style={{ alignSelf: "stretch", gap: 8, marginTop: 8 }}>
+            <Button title={`More with ${member.name.split(" ")[0]}`} onPress={() => openWebSearch(`${member.name} movies and shows`)} />
+            <Button title="Close" variant="secondary" onPress={onClose} />
+          </View>
+        </View>
+      ) : null}
+    </BottomSheet>
   );
 }
 
 export default function ResultScreen() {
-  const colors = useColors();
+  const t = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { resultData } = useLocalSearchParams<{ resultData: string }>();
+  const haptics = useHaptics();
+  const { id, fresh } = useLocalSearchParams<{ id: string; fresh?: string }>();
+  const history = useHistory();
+  const { settings, update } = useSettings();
+  const item = history.items.find((i) => i.id === id);
+  const result = item?.result;
+  const [confirmed, setConfirmed] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [castOpen, setCastOpen] = useState<CastMember | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [rateOpen, setRateOpen] = useState(false);
 
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
-  const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
+  const foundCount = useMemo(() => history.items.filter((i) => i.result.found).length, [history.items]);
 
-  let result: IdentifyResult | null = null;
-  try {
-    result = resultData ? JSON.parse(resultData) : null;
-  } catch {
-    result = null;
-  }
+  useEffect(() => {
+    if (!fresh || !result?.found || settings.ratePrompted || foundCount < RATE_AFTER_FOUND) return;
+    const timer = setTimeout(() => setRateOpen(true), 1500);
+    return () => clearTimeout(timer);
+  }, [fresh, result?.found, settings.ratePrompted, foundCount]);
 
-  if (!result) {
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  if (!item || !result) {
     return (
-      <View style={[styles.screen, { backgroundColor: colors.background }]}>
-        <View style={[styles.topBar, { paddingTop: topPad + 8, borderBottomColor: colors.border }]}>
-          <Pressable onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
-            <Ionicons name="chevron-back" size={26} color={colors.foreground} />
-          </Pressable>
+      <Screen>
+        <TopBar left="close" />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 14 }}>
+          <HeroIcon icon="alert-circle-outline" variant="soft" />
+          <Txt variant="title" center>Result unavailable</Txt>
         </View>
-        <View style={styles.errorState}>
-          <Ionicons name="alert-circle-outline" size={48} color={colors.destructive} />
-          <Text style={[styles.errorText, { color: colors.foreground }]}>Result unavailable</Text>
-        </View>
-      </View>
+      </Screen>
     );
   }
 
-  return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={[styles.topBar, { paddingTop: topPad + 8, borderBottomColor: colors.border }]}>
-        <Pressable
-          onPress={() => { Haptics.selectionAsync(); router.back(); }}
-          hitSlop={12}
-          style={styles.backBtn}
-        >
-          <Ionicons name="chevron-back" size={26} color={colors.foreground} />
-          <Text style={[styles.backLabel, { color: colors.foreground }]}>Back</Text>
-        </Pressable>
-        <Text style={[styles.navTitle, { color: colors.foreground }]}>Result</Text>
-        <View style={styles.backBtn} />
-      </View>
+  if (!result.found) return <NoMatch thumb={item.thumbUri} />;
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.scroll, { paddingBottom: bottomPad + 40 }]}
-      >
-        <View style={styles.heroSection}>
-          <LinearGradient
-            colors={["rgba(136,77,255,0.3)", "rgba(136,77,255,0.05)", colors.background]}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={styles.ringColumn}>
-            <ConfidenceRing confidence={result.confidence} size={140} />
-            <RecognitionStageBadge confidence={result.confidence} />
+  const lowConfidence = result.confidence < 60 && (result.alternativeTitles?.length ?? 0) > 0;
+  if (fresh && lowConfidence && !confirmed) {
+    return (
+      <>
+        <WhichOne result={result} onPick={() => setConfirmed(true)} onNone={() => setReportOpen(true)} />
+        <ReportSheet visible={reportOpen} onClose={() => setReportOpen(false)} result={result} onSent={() => router.replace("/")} />
+      </>
+    );
+  }
+
+  const title = result.title ?? result.creator ?? "Untitled";
+  const meta = [result.type ? TYPE_LABELS[result.type] ?? result.type : null, result.year, result.language, result.genre].filter(Boolean) as (string | number)[];
+  const ep = result.episode;
+  const hasEpisode = !!ep && (ep.season != null || ep.episode != null);
+  const crew = [
+    result.director ? ["Director", result.director] : null,
+    result.musicDirector ? ["Music", result.musicDirector] : null,
+    result.choreographer ? ["Choreography", result.choreographer] : null,
+    result.producer ? ["Producer", result.producer] : null,
+    result.country ? ["Country", result.country] : null,
+  ].filter(Boolean) as [string, string][];
+
+  return (
+    <View style={{ flex: 1, backgroundColor: t.bg }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }} showsVerticalScrollIndicator={false}>
+        <View style={{ height: 400 }}>
+          <Poster uri={item.thumbUri} seed={title} style={{ flex: 1, borderRadius: 0 }} />
+          <LinearGradient colors={["transparent", t.bg]} style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 140 }} />
+          <View style={{ position: "absolute", left: 18, right: 18, top: insets.top + 12, flexDirection: "row", justifyContent: "space-between" }}>
+            <IconButton icon="close" label="Close" variant="glass" onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))} />
+            <IconButton icon="share-outline" label="Share" variant="glass" onPress={() => router.push({ pathname: "/share", params: { id: item.id } })} />
           </View>
-          <View style={styles.heroInfo}>
-            {result.found ? (
-              <>
-                <Text style={[styles.heroTitle, { color: colors.foreground }]} numberOfLines={2}>
-                  {result.title ?? "Unknown"}
-                </Text>
-                <View style={styles.metaRow}>
-                  {result.year && (
-                    <Text style={[styles.metaChip, { color: colors.mutedForeground }]}>
-                      {result.year}
-                    </Text>
-                  )}
-                  {result.type && (
-                    <Text style={[styles.metaChip, { color: colors.mutedForeground }]}>
-                      {result.type.replace("_", " ")}
-                    </Text>
-                  )}
-                  {result.genre && (
-                    <Text style={[styles.metaChip, { color: colors.mutedForeground }]}>
-                      {result.genre}
-                    </Text>
-                  )}
-                </View>
-                {result.platform && <PlatformBadge platform={result.platform} />}
-              </>
-            ) : (
-              <>
-                <Text style={[styles.heroTitle, { color: colors.foreground }]}>Not Identified</Text>
-                <Text style={[styles.heroSubtitle, { color: colors.mutedForeground }]}>
-                  Try a clearer or brighter image
-                </Text>
-              </>
-            )}
-          </View>
+          <Sticker label={`${result.confidence}% MATCH`} size={15} style={{ position: "absolute", right: 22, bottom: 40 }} />
         </View>
 
-        <View style={styles.cards}>
-          {result.episode && (result.episode.season || result.episode.episode) && (
-            <View
-              style={[
-                styles.card,
-                {
-                  backgroundColor: "rgba(136,77,255,0.05)",
-                  borderColor: "rgba(136,77,255,0.2)",
-                },
-              ]}
-            >
-              <SectionLabel text="EPISODE" />
-              <Text style={[styles.cardValue, { color: colors.foreground }]}>
-                {[
-                  result.episode.season != null ? `S${result.episode.season}` : null,
-                  result.episode.episode != null ? `E${result.episode.episode}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-                {result.episode.episodeTitle ? ` — ${result.episode.episodeTitle}` : ""}
-              </Text>
-            </View>
-          )}
+        <View style={{ paddingHorizontal: 20, marginTop: -20, gap: 14 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+            {meta.map((m) => <Chip key={String(m)} label={String(m)} small />)}
+          </View>
+          <Txt variant="title" size={30}>{title}</Txt>
+          <Txt variant="caption" style={{ marginTop: -6 }}>
+            {confidenceLabel(result.confidence)} match
+            {result.creatorHandle ? ` · ${result.creatorHandle}` : result.creator && result.creator !== title ? ` · ${result.creator}` : ""}
+          </Txt>
 
-          {result.synopsis && (
-            <View
-              style={[
-                styles.card,
-                {
-                  backgroundColor: "rgba(136,77,255,0.05)",
-                  borderColor: "rgba(136,77,255,0.2)",
-                },
-              ]}
-            >
-              <SectionLabel text="SYNOPSIS" />
-              <Text style={[styles.cardValue, { color: colors.foreground, lineHeight: 22 }]}>
-                {result.synopsis}
-              </Text>
-            </View>
-          )}
+          {hasEpisode ? (
+            <Pressable onPress={() => router.push({ pathname: "/episode", params: { id: item.id } })} accessibilityRole="button">
+              <Card padded style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+                <HeroIcon icon="tv-outline" size={48} />
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Txt variant="overline" color="accent">
+                    {[ep?.season != null ? `Season ${ep.season}` : null, ep?.episode != null ? `Episode ${ep.episode}` : null].filter(Boolean).join(" · ")}
+                  </Txt>
+                  {ep?.episodeTitle ? <Txt variant="strong">{ep.episodeTitle}</Txt> : null}
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={t.muted} />
+              </Card>
+            </Pressable>
+          ) : null}
 
-          {result.cast && result.cast.length > 0 && (
-            <View
-              style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-            >
-              <SectionLabel text="CAST" />
-              <View style={styles.castList}>
-                {result.cast.map((c, i) => (
-                  <View key={i} style={styles.castRow}>
-                    <View style={[styles.castAvatar, { backgroundColor: colors.muted }]}>
-                      <Ionicons name="person" size={16} color={colors.mutedForeground} />
-                    </View>
-                    <View style={styles.castInfo}>
-                      <Text style={[styles.castName, { color: colors.foreground }]}>{c.name}</Text>
-                      {(c.role ?? c.character) && (
-                        <Text style={[styles.castRole, { color: colors.mutedForeground }]}>
-                          {c.character ?? c.role}
-                        </Text>
-                      )}
-                    </View>
-                  </View>
+          {result.platform ? (
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Button title={`Watch on ${result.platform}`} icon="play" onPress={() => openWatch(result.platform!, title)} style={{ flex: 1 }} height={50} />
+            </View>
+          ) : null}
+
+          <View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 4 }}>
+            <Action
+              icon={item.saved ? "bookmark" : "bookmark-outline"}
+              label={item.saved ? "Saved" : "Save"}
+              active={item.saved}
+              onPress={() => { history.toggleSaved(item.id); haptics.success(); setToast(item.saved ? "Removed from Saved" : "Saved for later"); }}
+            />
+            <Action icon="play-outline" label="Trailer" onPress={() => openTrailer(title, result.year)} />
+            <Action icon="phone-portrait-outline" label="Story" onPress={() => router.push({ pathname: "/share", params: { id: item.id } })} />
+            <Action icon="help-circle-outline" label="Not it?" onPress={() => setReportOpen(true)} />
+          </View>
+
+          {result.cast && result.cast.length ? (
+            <>
+              <Txt variant="overline">Cast</Txt>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14 }}>
+                {result.cast.map((m) => (
+                  <Pressable key={m.name} accessibilityRole="button" accessibilityLabel={m.name} onPress={() => setCastOpen(m)} style={{ width: 72, alignItems: "center", gap: 6 }}>
+                    <RingAvatar name={m.name} size={56} />
+                    <Text numberOfLines={2} style={{ fontFamily: fonts.body[700], fontSize: 11, color: t.ink, textAlign: "center" }}>{m.name}</Text>
+                  </Pressable>
                 ))}
+              </ScrollView>
+            </>
+          ) : null}
+
+          {result.synopsis ? (
+            <>
+              <Txt variant="overline">Story</Txt>
+              <Txt color="ink">{result.synopsis}</Txt>
+            </>
+          ) : null}
+
+          {crew.length ? (
+            <Card>
+              {crew.map(([k, v], i) => (
+                <View key={k}>
+                  {i > 0 ? <Divider /> : null}
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12, padding: 14 }}>
+                    <Txt variant="caption">{k}</Txt>
+                    <Txt variant="strong" style={{ flexShrink: 1, textAlign: "right" }}>{v}</Txt>
+                  </View>
+                </View>
+              ))}
+            </Card>
+          ) : null}
+
+          {result.identificationClues ? (
+            <Card padded style={{ gap: 6, backgroundColor: t.surface2, borderWidth: 0 }}>
+              <Txt variant="overline" color="accent">How we found it</Txt>
+              <Txt>{result.identificationClues}</Txt>
+            </Card>
+          ) : null}
+
+          {result.alternativeTitles && result.alternativeTitles.length ? (
+            <>
+              <Txt variant="overline">Also known as / could be</Txt>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {result.alternativeTitles.map((a) => <Chip key={a} label={a} small onPress={() => openWebSearch(a)} />)}
               </View>
-            </View>
-          )}
-
-          {(result.creator || result.creatorHandle || result.director || result.producer || result.musicDirector) && (
-            <View
-              style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-            >
-              <SectionLabel text="CREW" />
-              {(result.creator || result.creatorHandle) && (
-                <View style={styles.crewRow}>
-                  <Text style={[styles.crewLabel, { color: colors.mutedForeground }]}>Creator</Text>
-                  <Text style={[styles.crewValue, { color: colors.foreground }]}>
-                    {[result.creator, result.creatorHandle].filter(Boolean).join(" · ")}
-                  </Text>
-                </View>
-              )}
-              {result.director && (
-                <View style={styles.crewRow}>
-                  <Text style={[styles.crewLabel, { color: colors.mutedForeground }]}>Director</Text>
-                  <Text style={[styles.crewValue, { color: colors.foreground }]}>{result.director}</Text>
-                </View>
-              )}
-              {result.producer && (
-                <View style={styles.crewRow}>
-                  <Text style={[styles.crewLabel, { color: colors.mutedForeground }]}>Producer</Text>
-                  <Text style={[styles.crewValue, { color: colors.foreground }]}>{result.producer}</Text>
-                </View>
-              )}
-              {result.musicDirector && (
-                <View style={styles.crewRow}>
-                  <Text style={[styles.crewLabel, { color: colors.mutedForeground }]}>Music</Text>
-                  <Text style={[styles.crewValue, { color: colors.foreground }]}>{result.musicDirector}</Text>
-                </View>
-              )}
-            </View>
-          )}
-
-          {result.identificationClues && (
-            <View
-              style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-            >
-              <SectionLabel text="HOW IT WAS IDENTIFIED" />
-              <Text
-                style={[styles.cardValue, { color: colors.mutedForeground, fontStyle: "italic" }]}
-              >
-                {result.identificationClues}
-              </Text>
-            </View>
-          )}
+            </>
+          ) : null}
         </View>
       </ScrollView>
+
+      <ReportSheet visible={reportOpen} onClose={() => setReportOpen(false)} result={result} onSent={() => setToast("Thanks — that helps us get better")} />
+      <CastSheet member={castOpen} onClose={() => setCastOpen(null)} />
+      <BottomSheet visible={rateOpen} onClose={() => { setRateOpen(false); update({ ratePrompted: true }); }}>
+        <View style={{ alignItems: "center", gap: 12 }}>
+          <Txt variant="title" size={24} center>
+            <Txt variant="title" size={24} color="accent">{foundCount}</Txt> titles found!
+          </Txt>
+          <Txt center>Loving Videofy? A quick rating helps other people find it.</Txt>
+          <View style={{ alignSelf: "stretch", gap: 4 }}>
+            <Button
+              title="Rate Videofy"
+              onPress={async () => {
+                setRateOpen(false);
+                update({ ratePrompted: true });
+                if (await StoreReview.hasAction()) StoreReview.requestReview();
+              }}
+            />
+            <TextLink title="Maybe later" onPress={() => { setRateOpen(false); update({ ratePrompted: true }); }} />
+          </View>
+        </View>
+      </BottomSheet>
+      {toast ? <Toast message={toast} bottom={insets.bottom + 24} /> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 8,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  backBtn: { flexDirection: "row", alignItems: "center", width: 80 },
-  backLabel: { fontSize: 17 },
-  navTitle: { fontSize: 17, fontWeight: "600" },
-  scroll: { gap: 0 },
-  heroSection: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 20,
-    padding: 24,
-    paddingBottom: 28,
-    overflow: "hidden",
-  },
-  ringColumn: {
-    alignItems: "center",
-  },
-  heroInfo: { flex: 1, gap: 8 },
-  heroTitle: { fontSize: 20, fontWeight: "700", lineHeight: 26 },
-  heroSubtitle: { fontSize: 14 },
-  metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  metaChip: { fontSize: 13 },
-  platformBadge: {
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginTop: 2,
-  },
-  platformBadgeText: { fontSize: 12, fontWeight: "700" },
-  stageBadge: {
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    marginTop: 10,
-    alignSelf: "center",
-  },
-  stageBadgeText: { fontSize: 12, fontWeight: "700" },
-  cards: { padding: 16, gap: 10 },
-  card: {
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 16,
-    gap: 10,
-  },
-  sectionLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-    textTransform: "uppercase",
-  },
-  cardValue: { fontSize: 15 },
-  castList: { gap: 12 },
-  castRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  castAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  castInfo: { flex: 1 },
-  castName: { fontSize: 14, fontWeight: "600" },
-  castRole: { fontSize: 13, marginTop: 1 },
-  crewRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  crewLabel: { fontSize: 13 },
-  crewValue: { fontSize: 14, fontWeight: "500" },
-  errorState: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
-  errorText: { fontSize: 18, fontWeight: "600" },
-});

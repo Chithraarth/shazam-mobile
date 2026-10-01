@@ -1,234 +1,144 @@
-import { useAuth } from "@/lib/auth-context";
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
-import { LinearGradient } from "expo-linear-gradient";
 import { Redirect, useRouter } from "expo-router";
 import React, { useEffect, useRef } from "react";
-import {
-  ActivityIndicator,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Platform, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useColors } from "@/hooks/useColors";
 import { useProfile } from "@/hooks/useProfile";
+import { useAuth } from "@/lib/auth-context";
+import { emailSupport } from "@/lib/links";
 import { SCANS_PER_PACK, useBilling } from "@/lib/billing";
+import { Button, Card, Divider, Gradient, HeroIcon, IconButton, ListRow, Screen, Sticker, TextLink, Txt } from "@/ui/components";
+import { fonts, useTheme } from "@/ui/theme";
 
-export default function PaywallScreen() {
-  const colors = useColors();
-  const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const { isSignedIn, signOut } = useAuth();
-  const { data: profile } = useProfile();
-  const billing = useBilling();
-
-  const close = () => {
-    if (router.canGoBack()) router.back();
-    else router.replace("/");
-  };
-
-  // Leave once a purchase made (or restored) while this screen is open has
-  // been credited.
-  const creditedOnOpen = useRef(billing.creditedCount);
-  useEffect(() => {
-    if (billing.creditedCount > creditedOnOpen.current) close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [billing.creditedCount]);
-
-  useEffect(() => billing.clearError, []);
-
-  if (!isSignedIn) return <Redirect href="/sign-in" />;
-
-  const scansLeft = profile?.scansRemaining ?? 0;
-  const { priceText } = billing;
-  const canPurchase = billing.connected && !!billing.product && !billing.purchasing;
-  const storeName = Platform.OS === "ios" ? "the App Store" : "Google Play";
-
+function Feature({ text }: { text: string }) {
+  const t = useTheme();
   return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <LinearGradient
-        colors={["rgba(136,77,255,0.14)", colors.background]}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 0.55 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
-      <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          {
-            paddingTop: (Platform.OS === "web" ? 67 : insets.top) + 32,
-            paddingBottom: (Platform.OS === "web" ? 34 : insets.bottom) + 24,
-          },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        <Pressable
-          onPress={() => { Haptics.selectionAsync(); close(); }}
-          hitSlop={12}
-          style={styles.closeBtn}
-        >
-          <Ionicons name="close" size={22} color="#fff" />
-        </Pressable>
-        <View style={styles.header}>
-          <LinearGradient
-            colors={["#884dff", "#7c3aed"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.logoCircle}
-          >
-            <Ionicons name="film" size={30} color="#fff" />
-          </LinearGradient>
-          <Text style={[styles.title, { color: colors.foreground }]}>
-            {scansLeft > 0 ? "Get More Scans" : "You're Out of Scans"}
-          </Text>
-          <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-            {scansLeft > 0
-              ? `You have ${scansLeft} scan${scansLeft === 1 ? "" : "s"} left. Add a ${SCANS_PER_PACK}-scan pack for ${priceText}.`
-              : `Get a ${SCANS_PER_PACK}-scan pack for ${priceText} to keep identifying`}
-          </Text>
-        </View>
-
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.primary }]}>
-          <View style={[styles.badge, { backgroundColor: "rgba(136,77,255,0.15)" }]}>
-            <Text style={[styles.badgeText, { color: colors.primary }]}>{SCANS_PER_PACK} SCAN PACK</Text>
-          </View>
-          <Text style={[styles.price, { color: colors.foreground }]}>{priceText}</Text>
-          <Text style={[styles.priceSub, { color: colors.mutedForeground }]}>
-            One-time purchase · No subscription
-          </Text>
-
-          <View style={styles.featureList}>
-            {[
-              `${SCANS_PER_PACK} scan credits, use anytime`,
-              "Identify any movie, show or episode",
-              "Personalized to your region & language",
-              "Works with 50+ streaming platforms",
-              "Cast, synopsis, episode details",
-              "Buy another pack whenever you run out",
-            ].map((f) => (
-              <View key={f} style={styles.featureRow}>
-                <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
-                <Text style={[styles.featureText, { color: colors.foreground }]}>{f}</Text>
-              </View>
-            ))}
-          </View>
-
-          {billing.pendingPayment && (
-            <View style={styles.pendingBox}>
-              <Ionicons name="time-outline" size={16} color="#fbbf24" />
-              <Text style={styles.pendingText}>
-                Your payment is still processing. Your scans will be added automatically once {storeName} confirms it.
-              </Text>
-            </View>
-          )}
-
-          {billing.error && <Text style={styles.error}>{billing.error}</Text>}
-
-          <Pressable onPress={billing.buyScanPack} disabled={!canPurchase}>
-            <LinearGradient
-              colors={["#884dff", "#7c3aed"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={[styles.buyBtn, !canPurchase && { opacity: 0.7 }]}
-            >
-              {billing.purchasing || !billing.connected || !billing.product ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Text style={styles.buyBtnText}>Buy {SCANS_PER_PACK} Scans — {priceText}</Text>
-                  <Ionicons name="arrow-forward" size={18} color="#fff" />
-                </>
-              )}
-            </LinearGradient>
-          </Pressable>
-
-          <Pressable onPress={billing.restorePurchases} disabled={billing.restoring} style={styles.restoreBtn}>
-            {billing.restoring ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Text style={[styles.restoreText, { color: colors.primary }]}>Restore purchases</Text>
-            )}
-          </Pressable>
-
-          <Text style={[styles.note, { color: colors.mutedForeground }]}>
-            One-time purchase through {storeName}
-          </Text>
-        </View>
-
-        <Pressable onPress={() => signOut()} style={styles.signOutBtn}>
-          <Text style={[styles.signOutText, { color: colors.mutedForeground }]}>
-            Signed in as {profile?.email ?? "you"} · Sign out
-          </Text>
-        </Pressable>
-      </ScrollView>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+      <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: t.lime, alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="checkmark" size={15} color={t.onLime} />
+      </View>
+      <Txt variant="strong" style={{ flex: 1 }}>{text}</Txt>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  content: { paddingHorizontal: 24, gap: 24 },
-  header: { alignItems: "center", gap: 10 },
-  closeBtn: {
-    alignSelf: "flex-end",
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.1)",
-    marginBottom: 4,
-  },
-  logoCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  title: { fontSize: 26, fontWeight: "800" },
-  subtitle: { fontSize: 14, textAlign: "center", lineHeight: 20, paddingHorizontal: 12 },
-  card: {
-    borderRadius: 20,
-    borderWidth: 1.5,
-    padding: 22,
-    gap: 14,
-  },
-  badge: { alignSelf: "flex-start", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
-  badgeText: { fontSize: 11, fontWeight: "700", letterSpacing: 1 },
-  price: { fontSize: 44, fontWeight: "800" },
-  priceSub: { fontSize: 13, marginTop: -8 },
-  featureList: { gap: 10, marginVertical: 4 },
-  featureRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  featureText: { fontSize: 14, flex: 1 },
-  buyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    borderRadius: 14,
-    paddingVertical: 16,
-  },
-  buyBtnText: { fontSize: 17, fontWeight: "700", color: "#fff" },
-  note: { fontSize: 12, textAlign: "center" },
-  signOutBtn: { alignItems: "center", paddingVertical: 4 },
-  signOutText: { fontSize: 13 },
-  error: { color: "#f87171", fontSize: 13, textAlign: "center" },
-  pendingBox: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "flex-start",
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: "rgba(251,191,36,0.1)",
-  },
-  pendingText: { color: "#fbbf24", fontSize: 13, flex: 1, lineHeight: 18 },
-  restoreBtn: { alignItems: "center", paddingVertical: 4, minHeight: 24 },
-  restoreText: { fontSize: 14, fontWeight: "600" },
-});
+export default function Paywall() {
+  const t = useTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { isSignedIn } = useAuth();
+  const { data: profile } = useProfile();
+  const billing = useBilling();
+  const store = Platform.OS === "ios" ? "the App Store" : "Google Play";
+  const scansLeft = profile?.scansRemaining ?? 0;
+
+  const close = () => (router.canGoBack() ? router.back() : router.replace("/"));
+
+  // A purchase credited while this screen is open shows the success screen.
+  const creditedOnOpen = useRef(billing.creditedCount);
+  useEffect(() => {
+    if (billing.creditedCount > creditedOnOpen.current) router.replace("/purchase-success");
+  }, [billing.creditedCount, router]);
+
+  useEffect(() => billing.clearError, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!isSignedIn) return <Redirect href="/sign-in" />;
+
+  // Screen 30: a UPI/cash payment the store hasn't confirmed yet, or a paid
+  // purchase our server couldn't confirm yet (retried automatically).
+  if (billing.pendingPayment || billing.unconfirmed) {
+    return (
+      <Screen>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 16 }}>
+          <HeroIcon icon="time-outline" variant="soft" />
+          <Txt variant="title" center>
+            Almost <Txt variant="title" color="accent">there</Txt>
+          </Txt>
+          <Txt center>
+            {billing.pendingPayment
+              ? `Your payment is processing. We’ll add ${SCANS_PER_PACK} scans automatically once ${store} confirms it — you can close this.`
+              : `Payment received. We’re confirming it with ${store} and will add your ${SCANS_PER_PACK} scans automatically.`}
+          </Txt>
+          <Card style={{ alignSelf: "stretch" }}>
+            <ListRow icon="checkmark-circle" title="Payment started" />
+            <Divider />
+            <ListRow icon="hourglass-outline" title="Waiting for your bank" />
+            <Divider />
+            <ListRow icon="ellipse-outline" title="Scans added" />
+          </Card>
+        </View>
+        <Button title="Back to scanning" variant="secondary" onPress={close} />
+        <TextLink title={billing.restoring ? "Checking…" : "Check again"} onPress={billing.restorePurchases} />
+      </Screen>
+    );
+  }
+
+  // Screen 31: the purchase itself failed.
+  if (billing.error) {
+    return (
+      <Screen>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 16 }}>
+          <HeroIcon icon="close" variant="danger" />
+          <Txt variant="title" center>
+            Payment <Txt variant="title" color="accent">didn’t go through</Txt>
+          </Txt>
+          <Txt center>{billing.error}</Txt>
+          <Txt variant="caption" center>If money left your account, {store} refunds it automatically within 3–5 working days.</Txt>
+        </View>
+        <Button title="Try again" onPress={() => { billing.clearError(); billing.buyScanPack(); }} loading={billing.purchasing} />
+        <Button title="Back" variant="secondary" onPress={billing.clearError} />
+        <TextLink title="Contact support" onPress={() => emailSupport("Payment problem", billing.error ?? "")} />
+      </Screen>
+    );
+  }
+
+  const canBuy = billing.available && billing.connected && !!billing.product;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: t.bg }}>
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: insets.bottom + 24 }} showsVerticalScrollIndicator={false}>
+        <Gradient style={{ height: 380 + insets.top, paddingTop: insets.top + 12, paddingHorizontal: 24, overflow: "hidden" }}>
+          <View style={{ position: "absolute", left: -60, bottom: -80, width: 260, height: 260, borderRadius: 130, backgroundColor: "rgba(255,255,255,0.12)" }} />
+          <View style={{ position: "absolute", right: -40, top: insets.top + 60, width: 160, height: 160, borderRadius: 80, backgroundColor: "rgba(255,255,255,0.1)" }} />
+          <View style={{ alignItems: "flex-end" }}>
+            <IconButton icon="close" label="Close" variant="glass" onPress={close} />
+          </View>
+          <View style={{ marginTop: 30, gap: 2 }}>
+            <Text style={{ fontFamily: fonts.body[800], fontSize: 13, letterSpacing: 1.2, color: "#fff" }}>
+              {scansLeft > 0 ? `YOU HAVE ${scansLeft} SCANS LEFT` : "YOU’RE OUT OF SCANS"}
+            </Text>
+            <Text style={{ fontFamily: fonts.display[800], fontSize: 132, lineHeight: 136, color: "#fff", letterSpacing: -4 }}>{SCANS_PER_PACK}</Text>
+            <Text style={{ fontFamily: fonts.display[700], fontSize: 28, color: "#fff" }}>more scans</Text>
+          </View>
+          <Sticker label="≈ ₹10 / scan" size={14} style={{ position: "absolute", right: 24, bottom: 40 }} />
+        </Gradient>
+
+        <View style={{ padding: 20, gap: 16, flex: 1 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View style={{ gap: 2 }}>
+              <Txt variant="strong">One-time pack</Txt>
+              <Txt variant="caption">No subscription · never expires</Txt>
+            </View>
+            <Text style={{ fontFamily: fonts.display[800], fontSize: 34, color: t.ink }}>{billing.priceText}</Text>
+          </View>
+          <View style={{ gap: 10 }}>
+            <Feature text="Movies, shows, episodes & Reels" />
+            <Feature text="Cast, story and where to watch" />
+            <Feature text="Your scan is given back if anything fails on our side" />
+          </View>
+          <View style={{ flex: 1 }} />
+          {!billing.available ? <Txt variant="caption" center>Purchases are only available in the mobile app.</Txt> : null}
+          <Button
+            title={canBuy ? `Buy ${SCANS_PER_PACK} scans · ${billing.priceText}` : "Connecting to the store…"}
+            onPress={billing.buyScanPack}
+            loading={billing.purchasing}
+            disabled={!canBuy}
+            height={60}
+          />
+          <TextLink title={billing.restoring ? "Restoring…" : "Restore purchases"} onPress={billing.restorePurchases} />
+          <Txt variant="caption" center>Paid securely through {store}</Txt>
+        </View>
+      </ScrollView>
+    </View>
+  );
+}

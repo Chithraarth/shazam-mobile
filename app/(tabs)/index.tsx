@@ -1,856 +1,260 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
-import * as VideoThumbnails from "expo-video-thumbnails";
-import * as FileSystem from "expo-file-system/legacy";
-import * as ImageManipulator from "expo-image-manipulator";
-import { useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Easing,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useRef, useState } from "react";
+import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useColors } from "@/hooks/useColors";
-import { useAuth } from "@/lib/auth-context";
-import { useAuthedFetch, useProfile } from "@/hooks/useProfile";
-import { historyKeyFor, LocalHistoryItem } from "./history";
+import { useProfile } from "@/hooks/useProfile";
+import { prepareImage } from "@/lib/image";
+import { useIsOnline } from "@/lib/network";
+import { setPendingFrame } from "@/lib/scan-session";
+import { registerScanTrigger } from "@/lib/scan-trigger";
+import { Button, Chip, Gradient, HeroIcon, IconButton, OfflineBanner, TextLink, Txt } from "@/ui/components";
+import { fonts, useHaptics, useTheme } from "@/ui/theme";
 
-// Longest edge sent to the backend. Plenty for reading on-screen text and
-// faces, and keeps uploads well under the backend's 8MB limit.
-const MAX_IMAGE_EDGE = 1600;
-const FRAME_SIZE = 260;
-const CORNER_SIZE = 28;
-const CORNER_THICKNESS = 3;
+type Mode = "photo" | "camera" | "recording";
 
-// Shrinks the image so its longest edge is at most MAX_IMAGE_EDGE and
-// re-encodes it as JPEG. Images already small enough are only re-encoded.
-async function prepareImage(uri: string, width?: number, height?: number): Promise<string> {
-  const longest = Math.max(width ?? 0, height ?? 0);
-  const actions: ImageManipulator.Action[] = [];
-  if (!longest || longest > MAX_IMAGE_EDGE) {
-    // When the size is unknown, width is assumed to be the longest edge.
-    actions.push({
-      resize: (height ?? 0) > (width ?? 0) ? { height: MAX_IMAGE_EDGE } : { width: MAX_IMAGE_EDGE },
-    });
-  }
-  const result = await ImageManipulator.manipulateAsync(uri, actions, {
-    compress: 0.8,
-    format: ImageManipulator.SaveFormat.JPEG,
-    base64: true,
-  });
-  if (!result.base64) throw new Error("Couldn't process that image. Please try another.");
-  return result.base64;
-}
-async function saveToHistory(item: LocalHistoryItem, userId: string | null | undefined) {
-  try {
-    const key = historyKeyFor(userId);
-    const raw = await AsyncStorage.getItem(key);
-    const data: LocalHistoryItem[] = raw ? JSON.parse(raw) : [];
-    data.unshift(item);
-    if (data.length > 100) data.splice(100);
-    await AsyncStorage.setItem(key, JSON.stringify(data));
-  } catch {}
-}
-
-let CameraView: any = null;
-let useCameraPermissions: any = null;
-if (Platform.OS !== "web") {
-  try {
-    const cam = require("expo-camera");
-    CameraView = cam.CameraView;
-    useCameraPermissions = cam.useCameraPermissions;
-  } catch {}
-}
-function useCameraPerms() {
-  if (useCameraPermissions) return useCameraPermissions();
-  return [
-    { granted: false, status: "denied", canAskAgain: false },
-    async () => ({ granted: false }),
-  ];
-}
-
-function ViewfinderCorners({ scanning }: { scanning: boolean }) {
-  const colors = useColors();
-  const glowAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    if (scanning) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(glowAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
-          Animated.timing(glowAnim, { toValue: 0.4, duration: 800, useNativeDriver: true }),
-        ])
-      ).start();
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(scaleAnim, { toValue: 1.04, duration: 600, useNativeDriver: true }),
-          Animated.timing(scaleAnim, { toValue: 0.98, duration: 600, useNativeDriver: true }),
-        ])
-      ).start();
-    } else {
-      Animated.timing(glowAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-      Animated.timing(scaleAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-    }
-    return () => {
-      glowAnim.stopAnimation();
-      scaleAnim.stopAnimation();
-    };
-  }, [scanning]);
-
-  const cornerColor = glowAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["rgba(136,77,255,0.4)", "rgba(136,77,255,1)"],
-  });
-
-  const corners = [
-    { top: 0, left: 0, borderTopWidth: CORNER_THICKNESS, borderLeftWidth: CORNER_THICKNESS },
-    { top: 0, right: 0, borderTopWidth: CORNER_THICKNESS, borderRightWidth: CORNER_THICKNESS },
-    { bottom: 0, left: 0, borderBottomWidth: CORNER_THICKNESS, borderLeftWidth: CORNER_THICKNESS },
-    { bottom: 0, right: 0, borderBottomWidth: CORNER_THICKNESS, borderRightWidth: CORNER_THICKNESS },
-  ];
-
-  return (
-    <Animated.View
-      style={[
-        styles.viewfinderFrame,
-        { transform: [{ scale: scaleAnim }] },
-      ]}
-    >
-      {corners.map((corner, i) => (
-        <Animated.View
-          key={i}
-          style={[
-            styles.corner,
-            corner,
-            {
-              borderColor: cornerColor,
-              width: CORNER_SIZE,
-              height: CORNER_SIZE,
-            },
-          ]}
-        />
-      ))}
-    </Animated.View>
-  );
-}
-
-function ScanLine({ scanning }: { scanning: boolean }) {
-  const scanY = useRef(new Animated.Value(0)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (scanning) {
-      Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(scanY, {
-            toValue: FRAME_SIZE - 2,
-            duration: 1800,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(scanY, {
-            toValue: 0,
-            duration: 1800,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-    } else {
-      Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }).start();
-      scanY.setValue(0);
-    }
-    return () => {
-      scanY.stopAnimation();
-      opacity.stopAnimation();
-    };
-  }, [scanning]);
-
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        styles.scanLineContainer,
-        { opacity, transform: [{ translateY: scanY }] },
-      ]}
-    >
-      <LinearGradient
-        colors={["transparent", "rgba(136,77,255,0.9)", "transparent"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.scanLine}
-      />
-      <View style={styles.scanLineGlow} />
-    </Animated.View>
-  );
-}
-
-function ScanButton({
-  onPress,
-  scanning,
-  disabled,
-}: {
-  onPress: () => void;
-  scanning: boolean;
-  disabled: boolean;
-}) {
-  const ripple1 = useRef(new Animated.Value(0)).current;
-  const ripple2 = useRef(new Animated.Value(0)).current;
-  const ripple3 = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(1)).current;
-  const spin = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    ripple1.stopAnimation();
-    ripple2.stopAnimation();
-    ripple3.stopAnimation();
-    pulse.stopAnimation();
-    spin.stopAnimation();
-
-    if (scanning) {
-      pulse.setValue(1);
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulse, { toValue: 1.08, duration: 600, useNativeDriver: true }),
-          Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
-        ])
-      ).start();
-      Animated.loop(
-        Animated.timing(spin, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: true })
-      ).start();
-    } else {
-      Animated.loop(
-        Animated.parallel([
-          Animated.sequence([
-            Animated.timing(ripple1, { toValue: 1, duration: 2200, useNativeDriver: true }),
-            Animated.timing(ripple1, { toValue: 0, duration: 0, useNativeDriver: true }),
-          ]),
-          Animated.sequence([
-            Animated.delay(700),
-            Animated.timing(ripple2, { toValue: 1, duration: 2200, useNativeDriver: true }),
-            Animated.timing(ripple2, { toValue: 0, duration: 0, useNativeDriver: true }),
-          ]),
-          Animated.sequence([
-            Animated.delay(1400),
-            Animated.timing(ripple3, { toValue: 1, duration: 2200, useNativeDriver: true }),
-            Animated.timing(ripple3, { toValue: 0, duration: 0, useNativeDriver: true }),
-          ]),
-        ])
-      ).start();
-    }
-
-    return () => {
-      ripple1.stopAnimation();
-      ripple2.stopAnimation();
-      ripple3.stopAnimation();
-      pulse.stopAnimation();
-      spin.stopAnimation();
-    };
-  }, [scanning]);
-
-  const rippleStyle = (anim: Animated.Value) => ({
+function Corner({ pos, color }: { pos: "tl" | "tr" | "bl" | "br"; color: string }) {
+  const size = 40;
+  const w = 4;
+  const r = 14;
+  const style = {
     position: "absolute" as const,
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    borderWidth: 1.5,
-    borderColor: "rgba(136,77,255,0.8)",
-    opacity: anim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 0.6, 0] }),
-    transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 2.6] }) }],
-  });
-
-  const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
-
-  return (
-    <View style={styles.scanBtnWrapper}>
-      {!scanning && (
-        <>
-          <Animated.View style={rippleStyle(ripple1)} />
-          <Animated.View style={rippleStyle(ripple2)} />
-          <Animated.View style={rippleStyle(ripple3)} />
-        </>
-      )}
-      {scanning && (
-        <Animated.View
-          style={[
-            styles.spinRing,
-            { transform: [{ rotate }] },
-          ]}
-        />
-      )}
-      <Animated.View style={{ transform: [{ scale: pulse }] }}>
-        <Pressable
-          onPress={onPress}
-          disabled={disabled || scanning}
-          testID="scan-button"
-          style={({ pressed }) => [
-            { opacity: disabled && !scanning ? 0.5 : pressed ? 0.85 : 1 },
-          ]}
-        >
-          <LinearGradient
-            colors={["#884dff", "#7c3aed"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.scanBtnGradient}
-          >
-            {scanning ? (
-              <ActivityIndicator color="#fff" size="large" />
-            ) : (
-              <Ionicons name="scan-outline" size={36} color="#fff" />
-            )}
-          </LinearGradient>
-        </Pressable>
-      </Animated.View>
-    </View>
-  );
+    width: size,
+    height: size,
+    borderColor: color,
+    ...(pos === "tl" ? { left: 0, top: 0, borderTopWidth: w, borderLeftWidth: w, borderTopLeftRadius: r } : {}),
+    ...(pos === "tr" ? { right: 0, top: 0, borderTopWidth: w, borderRightWidth: w, borderTopRightRadius: r } : {}),
+    ...(pos === "bl" ? { left: 0, bottom: 0, borderBottomWidth: w, borderLeftWidth: w, borderBottomLeftRadius: r } : {}),
+    ...(pos === "br" ? { right: 0, bottom: 0, borderBottomWidth: w, borderRightWidth: w, borderBottomRightRadius: r } : {}),
+  };
+  return <View style={style} />;
 }
-
-type ScanState = "idle" | "scanning" | "error";
 
 export default function ScanScreen() {
-  const colors = useColors();
+  const t = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const authedFetch = useAuthedFetch();
-  const { user } = useAuth();
-  const { data: profile, refetch: refetchProfile } = useProfile();
-  const cameraRef = useRef<any>(null);
+  const haptics = useHaptics();
+  const online = useIsOnline();
+  // Tabs stay mounted, so the camera is only kept on while this tab is visible.
+  const [focused, setFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
+  const { data: profile } = useProfile();
+  const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
+  const [ready, setReady] = useState(false);
+  const [facing, setFacing] = useState<"back" | "front">("back");
+  const [torch, setTorch] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const [scanState, setScanState] = useState<ScanState>("idle");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [cameraFacing, setCameraFacing] = useState<"back" | "front">("back");
-  const [permission, requestPermission] = useCameraPerms();
-  const [cameraReady, setCameraReady] = useState(false);
+  const scansLeft = profile?.scansRemaining ?? 0;
+  const granted = !!permission?.granted;
+  const blocked = permission ? !permission.granted && !permission.canAskAgain : false;
 
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
-  const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
-  const canUseCamera = Platform.OS !== "web" && CameraView !== null && permission?.granted;
-  const cameraPermissionNeeded =
-    Platform.OS !== "web" && CameraView !== null && permission !== null && !permission?.granted;
-
-  async function callIdentify(imageData: string, mimeType: string) {
-    const res = await authedFetch("/api/identify", {
-      method: "POST",
-      body: JSON.stringify({
-        imageData,
-        mimeType,
-      }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 401 || res.status === 403) throw new Error("ACCESS_DENIED");
-      if (res.status === 402) throw new Error("OUT_OF_SCANS");
-      throw new Error((data as any).message ?? (data as any).error ?? `Server error ${res.status}`);
+  // Checks done before every scan, whatever the source.
+  const preflight = useCallback((): boolean => {
+    setError(null);
+    if (!online) {
+      haptics.warning();
+      setError("You’re offline — connect to scan. Nothing was charged.");
+      return false;
     }
-    return res.json();
-  }
+    if (scansLeft <= 0) {
+      router.push("/paywall");
+      return false;
+    }
+    return true;
+  }, [online, scansLeft, router, haptics]);
 
-  async function runScan(imageData: string, mimeType: string) {
-    const result = await callIdentify(imageData, mimeType);
-    refetchProfile();
-    await saveToHistory({
-      id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
-      createdAt: new Date().toISOString(),
-      found: result.found,
-      confidence: result.confidence,
-      title: result.title ?? null,
-      type: result.type ?? null,
-      platform: result.platform ?? null,
-      resultData: JSON.stringify(result),
-    }, user?.uid);
-    await Haptics.notificationAsync(
-      result.found
-        ? Haptics.NotificationFeedbackType.Success
-        : Haptics.NotificationFeedbackType.Warning
-    );
-    setScanState("idle");
-    router.push({ pathname: "/result", params: { resultData: JSON.stringify(result) } });
-  }
-
-  function outOfScans(): boolean {
-    return (profile?.scansRemaining ?? 0) <= 0;
-  }
-
-  async function handleScan() {
-    if (scanState === "scanning") return;
-    if (outOfScans()) { router.push("/paywall"); return; }
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setScanState("scanning");
-    setErrorMsg(null);
+  const capture = useCallback(async () => {
+    if (busy || !preflight()) return;
+    if (!granted || !cameraRef.current) return;
+    setBusy(true);
     try {
-      let imageData: string;
-      const mimeType = "image/jpeg";
-      if (canUseCamera && cameraRef.current) {
-        // Some Android camera HALs (notably ColorOS/OnePlus) reliably throw
-        // "Aborted" from takePictureAsync when skipProcessing:true is used —
-        // it bypasses parts of the capture pipeline their custom camera
-        // stack expects to run, unrelated to timing. Retrying doesn't help
-        // (confirmed on-device), so we don't pass skipProcessing at all; we
-        // still wait for onCameraReady and retry a couple of times in case a
-        // *different*, genuinely transient error occurs.
-        if (!cameraReady) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
+      if (!ready) await new Promise((r) => setTimeout(r, 500));
+      // Some Android camera stacks (notably ColorOS) throw a one-off "Aborted";
+      // a couple of retries covers genuinely transient failures.
+      let photo: { uri: string; width: number; height: number } | undefined;
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 3 && !photo; attempt++) {
+        try {
+          photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
+        } catch (err) {
+          lastErr = err;
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
         }
-        let photo;
-        let captureError: any = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            photo = await cameraRef.current.takePictureAsync({
-              quality: 0.85,
-            });
-            captureError = null;
-            break;
-          } catch (err: any) {
-            captureError = err;
-            await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-          }
-        }
-        if (captureError) throw captureError;
-        if (!photo?.uri) throw new Error("Camera capture failed");
-        imageData = await prepareImage(photo.uri, photo.width, photo.height);
-      } else {
-        const picked = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ["images"], quality: 1, allowsEditing: false,
-        });
-        if (picked.canceled || !picked.assets?.[0]?.uri) { setScanState("idle"); return; }
-        const asset = picked.assets[0];
-        imageData = await prepareImage(asset.uri, asset.width, asset.height);
       }
-      await runScan(imageData, mimeType);
-    } catch (err: any) {
-      if (err.message === "OUT_OF_SCANS") {
-        setScanState("idle");
-        refetchProfile();
-        router.push("/paywall");
-        return;
-      }
-      setScanState("error");
-      setErrorMsg(
-        err.message === "ACCESS_DENIED"
-          ? "Your session has expired. Please sign out and sign in again."
-          : err.message === "Aborted"
-            ? "Camera wasn't ready — please try again, or use Upload if this keeps happening."
-            : err.message ?? "Scan failed. Please try again."
-      );
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      if (!photo) throw lastErr ?? new Error("Camera capture failed");
+      const frame = await prepareImage(photo.uri, photo.width, photo.height);
+      setPendingFrame({ ...frame, source: "camera" });
+      router.push("/identifying");
+    } catch {
+      haptics.error();
+      setError("Camera wasn’t ready — try again, or upload a photo instead.");
+    } finally {
+      setBusy(false);
     }
-  }
+  }, [busy, preflight, granted, ready, router, haptics]);
 
-  async function handleUpload() {
-    if (scanState === "scanning") return;
-    if (outOfScans()) { router.push("/paywall"); return; }
-    await Haptics.selectionAsync();
-    setScanState("scanning");
-    setErrorMsg(null);
+  const pickPhoto = useCallback(async () => {
+    if (busy || !preflight()) return;
+    // allowsEditing gives the native crop screen, so people can cut away
+    // likes, captions and app buttons before we identify.
+    const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, quality: 1 });
+    const asset = picked.canceled ? null : picked.assets?.[0];
+    if (!asset?.uri) return;
+    setBusy(true);
     try {
-      const picked = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"], quality: 1, allowsEditing: false,
-      });
-      if (picked.canceled || !picked.assets?.[0]?.uri) { setScanState("idle"); return; }
-      const asset = picked.assets[0];
-      await runScan(await prepareImage(asset.uri, asset.width, asset.height), "image/jpeg");
-    } catch (err: any) {
-      if (err.message === "OUT_OF_SCANS") {
-        setScanState("idle");
-        refetchProfile();
-        router.push("/paywall");
-        return;
-      }
-      setScanState("error");
-      setErrorMsg(
-        err.message === "ACCESS_DENIED"
-          ? "Your session has expired. Please sign out and sign in again."
-          : err.message ?? "Upload failed. Please try again."
-      );
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      const frame = await prepareImage(asset.uri, asset.width, asset.height);
+      setPendingFrame({ ...frame, source: "photo" });
+      router.push("/identifying");
+    } catch {
+      setError("Couldn’t open that photo. Please try another.");
+    } finally {
+      setBusy(false);
     }
-  }
+  }, [busy, preflight, router]);
 
-  async function runScreenScan() {
-    setScanState("scanning");
-    setErrorMsg(null);
-    try {
-      const picked = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["videos"],
-        allowsEditing: false,
-      });
-      if (picked.canceled || !picked.assets?.[0]?.uri) {
-        setScanState("idle");
-        return;
-      }
-      const asset = picked.assets[0];
-      const durationMs = asset.duration ?? 0;
-      const timeMs = durationMs > 0 ? Math.floor(durationMs / 2) : 1000;
-      // Extract a single frame for identification — no playback, no extra in-app copy kept
-      let thumb;
-      try {
-        thumb = await VideoThumbnails.getThumbnailAsync(asset.uri, {
-          time: timeMs,
-          quality: 0.75,
-        });
-      } catch {
-        thumb = await VideoThumbnails.getThumbnailAsync(asset.uri, {
-          time: 1000,
-          quality: 0.75,
-        });
-      }
-      let base64: string;
-      try {
-        base64 = await prepareImage(thumb.uri, thumb.width, thumb.height);
-      } finally {
-        await FileSystem.deleteAsync(thumb.uri, { idempotent: true }).catch(() => {});
-      }
-      await runScan(base64, "image/jpeg");
-    } catch (err: any) {
-      if (err.message === "OUT_OF_SCANS") {
-        setScanState("idle");
-        refetchProfile();
-        router.push("/paywall");
-        return;
-      }
-      setScanState("error");
-      setErrorMsg(
-        err.message === "ACCESS_DENIED"
-          ? "Your session has expired. Please sign out and sign in again."
-          : "Couldn't read that recording. Please try another clip."
-      );
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    }
-  }
+  useFocusEffect(
+    useCallback(() => {
+      registerScanTrigger(granted ? capture : pickPhoto);
+      return () => registerScanTrigger(null);
+    }, [granted, capture, pickPhoto]),
+  );
 
-  async function handleScreenScan() {
-    if (scanState === "scanning") return;
-    if (outOfScans()) { router.push("/paywall"); return; }
-    await Haptics.selectionAsync();
-    Alert.alert(
-      "Scan Your Screen",
-      "Record your screen using your phone's built-in Screen Recording (Control Center on iPhone, Quick Settings on Android) while the video plays, then pick that recording here.\n\nPrivacy: we extract just one frame to identify the video. The app never plays the recording back or keeps a copy of it.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Choose Recording", onPress: () => { runScreenScan(); } },
-      ]
-    );
-  }
+  const onMode = (m: Mode) => {
+    haptics.tap();
+    if (m === "photo") pickPhoto();
+    if (m === "recording") router.push("/scan/recording-guide");
+  };
 
-  const isScanning = scanState === "scanning";
+  const scansPill = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${scansLeft} scans left. Get more scans`}
+      onPress={() => router.push("/paywall")}
+      style={{ height: 40, paddingLeft: 6, paddingRight: 14, borderRadius: 20, backgroundColor: "rgba(13,11,20,0.6)", flexDirection: "row", alignItems: "center", gap: 8 }}
+    >
+      <Gradient style={{ minWidth: 28, height: 28, paddingHorizontal: 6, borderRadius: 14, alignItems: "center", justifyContent: "center" }}>
+        <Text style={{ fontFamily: fonts.body[800], fontSize: 12, color: "#fff" }}>{scansLeft}</Text>
+      </Gradient>
+      <Text style={{ fontFamily: fonts.body[800], fontSize: 14, color: "#fff" }}>{scansLeft === 1 ? "scan left" : "scans left"}</Text>
+    </Pressable>
+  );
 
-  return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      {canUseCamera ? (
-        <>
-          <CameraView
-            ref={cameraRef}
-            style={StyleSheet.absoluteFill}
-            facing={cameraFacing}
-            onCameraReady={() => setCameraReady(true)}
-          />
-          <LinearGradient
-            colors={[colors.background, "transparent"]}
-            start={{ x: 0.5, y: 1 }}
-            end={{ x: 0.5, y: 0.55 }}
-            style={styles.cameraBottomFade}
-            pointerEvents="none"
-          />
-          <LinearGradient
-            colors={[colors.background, "transparent"]}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 0.2 }}
-            style={styles.cameraTopFade}
-            pointerEvents="none"
-          />
-        </>
-      ) : (
-        <LinearGradient
-          colors={["rgba(136,77,255,0.15)", colors.background]}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 0.55 }}
-          style={StyleSheet.absoluteFill}
-        />
-      )}
+  const modeSwitcher = (
+    <View style={{ flexDirection: "row", justifyContent: "center", gap: 26 }}>
+      {([["photo", "PHOTO"], ["camera", "CAMERA"], ["recording", "SCREEN REC"]] as const).map(([m, label]) => {
+        const on = m === "camera";
+        return (
+          <Pressable key={m} accessibilityRole="button" accessibilityLabel={label} onPress={() => onMode(m)} hitSlop={10} style={{ alignItems: "center", gap: 4 }}>
+            <Text style={{ fontFamily: fonts.body[800], fontSize: 13, letterSpacing: 0.8, color: on ? "#fff" : "rgba(255,255,255,0.65)" }}>{label}</Text>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: on ? "#FF5CAD" : "transparent" }} />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
 
-      {cameraPermissionNeeded && (
-        <View style={styles.permArea}>
-          {permission?.canAskAgain ? (
-            <Pressable onPress={requestPermission} style={styles.permBtn}>
-              <LinearGradient colors={["#884dff", "#7c3aed"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.permBtnGrad}>
-                <Text style={styles.permBtnText}>Allow Camera</Text>
-              </LinearGradient>
-            </Pressable>
+  // Camera not allowed yet: explain before the system prompt (screen 15),
+  // or point to Settings once it has been denied for good (screen 16).
+  if (!granted) {
+    return (
+      <View style={{ flex: 1, backgroundColor: t.bg, paddingTop: insets.top + 12, paddingHorizontal: 20, paddingBottom: insets.bottom + 120 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={{ fontFamily: fonts.display[800], fontSize: 18, color: t.ink }}>videofy</Text>
+          <Chip label={`${scansLeft} scans left`} small onPress={() => router.push("/paywall")} />
+        </View>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 16 }}>
+          {!permission ? (
+            <ActivityIndicator color={t.accent} />
+          ) : blocked ? (
+            <>
+              <HeroIcon icon="videocam-off-outline" variant="soft" />
+              <Txt variant="title" center>Camera is off</Txt>
+              <Txt center>Turn it on in Settings → Apps → Videofy → Permissions.</Txt>
+            </>
           ) : (
-            <Pressable
-              onPress={() => Alert.alert("Camera Permission", "Please enable camera access in Settings.")}
-              style={[styles.permBtnOutline, { borderColor: colors.primary }]}
-            >
-              <Text style={[styles.permBtnText, { color: colors.primary }]}>Open Settings</Text>
-            </Pressable>
+            <>
+              <HeroIcon icon="camera" />
+              <Txt variant="title" center>
+                Camera, <Txt variant="title" color="accent">please?</Txt>
+              </Txt>
+              <Txt center>Just one photo of the screen when you tap Scan. No video, no sound, never in the background.</Txt>
+              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+                <Chip label="Only when you tap" icon="checkmark-circle" small />
+                <Chip label="No recording" icon="checkmark-circle" small />
+              </View>
+            </>
           )}
         </View>
-      )}
+        {!online ? <OfflineBanner /> : null}
+        {error ? <Txt color="danger" center>{error}</Txt> : null}
+        <View style={{ gap: 6, marginTop: 12 }}>
+          {permission && !blocked ? <Button title="Allow camera" onPress={requestPermission} /> : null}
+          {blocked ? <Button title="Open Settings" onPress={() => Linking.openSettings()} /> : null}
+          <Button title="Upload a photo instead" variant="secondary" onPress={pickPhoto} loading={busy} />
+          <TextLink title="Scan a screen recording" onPress={() => router.push("/scan/recording-guide")} />
+        </View>
+      </View>
+    );
+  }
 
-      <View style={styles.viewfinderArea} pointerEvents="none">
-        <ViewfinderCorners scanning={isScanning} />
-        <ScanLine scanning={isScanning} />
+  return (
+    <View style={{ flex: 1, backgroundColor: "#000" }}>
+      {focused ? (
+        <CameraView
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          facing={facing}
+          enableTorch={torch}
+          onCameraReady={() => setReady(true)}
+        />
+      ) : null}
+      <View style={{ position: "absolute", left: 0, right: 0, top: 0, height: insets.top + 90, backgroundColor: "rgba(0,0,0,0.25)" }} pointerEvents="none" />
+
+      <View style={{ position: "absolute", left: 18, right: 18, top: insets.top + 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        {scansPill}
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <IconButton icon={torch ? "flash" : "flash-outline"} label={torch ? "Turn flash off" : "Turn flash on"} variant={torch ? "lime" : "glass"} onPress={() => setTorch((v) => !v)} />
+          <IconButton icon="camera-reverse-outline" label="Switch camera" variant="glass" onPress={() => { setReady(false); setFacing((f) => (f === "back" ? "front" : "back")); }} />
+        </View>
       </View>
 
-      <View style={[styles.topBar, { paddingTop: topPad + 12, paddingHorizontal: 16 }]}>
-        {canUseCamera ? (
-          <Pressable
-            onPress={() => { setCameraReady(false); setCameraFacing((f) => (f === "back" ? "front" : "back")); }}
-            style={[styles.topIconBtn, { backgroundColor: "rgba(0,0,0,0.5)" }]}
-          >
-            <Ionicons name="camera-reverse-outline" size={20} color="#fff" />
+      <View pointerEvents="none" style={{ position: "absolute", left: 22, right: 22, top: insets.top + 130, bottom: insets.bottom + 230 }}>
+        <Corner pos="tl" color="#FF5CAD" />
+        <Corner pos="tr" color="#FF5CAD" />
+        <Corner pos="bl" color="#F0600A" />
+        <Corner pos="br" color="#F0600A" />
+        {busy ? (
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+            <ActivityIndicator color="#fff" size="large" />
+          </View>
+        ) : null}
+      </View>
+
+      <View style={{ position: "absolute", left: 20, right: 20, bottom: insets.bottom + 110, gap: 14 }}>
+        {!online ? <OfflineBanner /> : null}
+        {error ? (
+          <Pressable onPress={() => setError(null)} style={{ flexDirection: "row", gap: 10, alignItems: "center", padding: 12, borderRadius: 16, backgroundColor: "rgba(13,11,20,0.82)" }}>
+            <Ionicons name="alert-circle" size={18} color="#FF6B6B" />
+            <Text style={{ flex: 1, color: "#fff", fontFamily: fonts.body[600], fontSize: 13 }}>{error}</Text>
           </Pressable>
         ) : (
-          <View style={styles.topIconBtn} />
-        )}
-
-        <Pressable
-          onPress={handleUpload}
-          disabled={isScanning}
-          style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
-        >
-          <Text style={styles.logoText}>Videofy</Text>
-        </Pressable>
-
-        <View style={styles.topIconBtn} />
-      </View>
-
-      <View style={[styles.bottomArea, { paddingBottom: bottomPad + 90 }]}>
-        {scanState === "error" && errorMsg && (
-          <Pressable
-            onPress={() => { setScanState("idle"); setErrorMsg(null); }}
-            style={styles.errorPill}
-          >
-            <Ionicons name="alert-circle" size={16} color="#f87171" />
-            <Text style={styles.errorPillText} numberOfLines={2}>{errorMsg}</Text>
-          </Pressable>
-        )}
-
-        {isScanning && (
-          <View style={styles.statusRow}>
-            <View style={styles.statusDot} />
-            <Text style={styles.statusText}>Identifying…</Text>
+          <View style={{ alignSelf: "center", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: "rgba(13,11,20,0.6)" }}>
+            <Text style={{ fontFamily: fonts.body[700], fontSize: 14, color: "#fff" }}>Point at any screen, then tap Scan</Text>
           </View>
         )}
-
-        <ScanButton
-          onPress={handleScan}
-          scanning={isScanning}
-          disabled={scanState !== "idle" && scanState !== "error"}
-        />
-
-        <Text style={[styles.tapHint, { color: "rgba(255,255,255,0.4)" }]}>
-          {isScanning ? "Processing your image" : "Tap to identify"}
-        </Text>
-
-        <Pressable
-          onPress={handleScreenScan}
-          disabled={isScanning}
-          style={({ pressed }) => [
-            styles.screenScanBtn,
-            { opacity: isScanning ? 0.4 : pressed ? 0.7 : 1 },
-          ]}
-        >
-          <Ionicons name="phone-portrait-outline" size={16} color="#b794ff" />
-          <Text style={styles.screenScanText}>Scan a screen recording</Text>
-        </Pressable>
+        {modeSwitcher}
       </View>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  cameraBottomFade: {
-    position: "absolute", bottom: 0, left: 0, right: 0, height: 300,
-  },
-  cameraTopFade: {
-    position: "absolute", top: 0, left: 0, right: 0, height: 140,
-  },
-  noCameraArea: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 16,
-    paddingHorizontal: 40,
-    paddingBottom: 140,
-  },
-  noCameraCircle: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  noCameraText: { fontSize: 15, textAlign: "center", lineHeight: 22 },
-  permBtn: { borderRadius: 12, overflow: "hidden", marginTop: 4 },
-  permBtnGrad: { paddingHorizontal: 28, paddingVertical: 13 },
-  permBtnOutline: {
-    borderWidth: 1.5,
-    borderRadius: 12,
-    paddingHorizontal: 28,
-    paddingVertical: 13,
-    marginTop: 4,
-  },
-  permBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  viewfinderArea: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 120,
-  },
-  viewfinderFrame: {
-    width: FRAME_SIZE,
-    height: FRAME_SIZE,
-    position: "relative",
-  },
-  corner: {
-    position: "absolute",
-    borderColor: "rgba(136,77,255,0.8)",
-    borderRadius: 3,
-  },
-  scanLineContainer: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    width: FRAME_SIZE,
-    height: 4,
-    overflow: "visible",
-  },
-  scanLine: {
-    height: 2,
-    width: "100%",
-    borderRadius: 1,
-  },
-  scanLineGlow: {
-    position: "absolute",
-    top: -6,
-    left: "10%",
-    right: "10%",
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "rgba(136,77,255,0.15)",
-  },
-  topBar: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-  },
-  logoText: { color: "#fff", fontSize: 20, fontWeight: "800", letterSpacing: 0.3 },
-  topIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  permArea: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 140,
-  },
-  bottomArea: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    gap: 14,
-    paddingTop: 16,
-  },
-  statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#884dff",
-  },
-  statusText: {
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 14,
-    fontWeight: "500",
-    letterSpacing: 0.3,
-  },
-  errorPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.8)",
-    marginHorizontal: 24,
-  },
-  errorPillText: { color: "#f87171", fontSize: 13, flex: 1 },
-  scanBtnWrapper: {
-    width: 110,
-    height: 110,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  spinRing: {
-    position: "absolute",
-    width: 126,
-    height: 126,
-    borderRadius: 63,
-    borderWidth: 2,
-    borderColor: "transparent",
-    borderTopColor: "#884dff",
-    borderRightColor: "rgba(136,77,255,0.4)",
-  },
-  scanBtnGradient: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#884dff",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 24,
-  },
-  tapHint: {
-    fontSize: 13,
-    letterSpacing: 0.3,
-  },
-  screenScanBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "rgba(136,77,255,0.45)",
-    backgroundColor: "rgba(136,77,255,0.12)",
-  },
-  screenScanText: {
-    color: "#b794ff",
-    fontSize: 13,
-    fontWeight: "600",
-    letterSpacing: 0.2,
-  },
-});

@@ -1,6 +1,7 @@
 import { useAuth } from "@/lib/auth-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
+import { emitSessionExpired } from "@/lib/session-events";
 
 export function apiBase(): string {
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
@@ -51,7 +52,7 @@ export function useAuthedFetch() {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
-        return await fetch(`${apiBase()}${path}`, {
+        const res = await fetch(`${apiBase()}${path}`, {
           ...init,
           signal: controller.signal,
           headers: {
@@ -60,6 +61,8 @@ export function useAuthedFetch() {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
         });
+        if (res.status === 401 && token) emitSessionExpired();
+        return res;
       } finally {
         clearTimeout(timer);
       }

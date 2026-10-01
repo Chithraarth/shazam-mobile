@@ -1,20 +1,32 @@
 import {
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
-  Inter_700Bold,
-  useFonts,
-} from "@expo-google-fonts/inter";
+  PlusJakartaSans_400Regular,
+  PlusJakartaSans_500Medium,
+  PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold,
+} from "@expo-google-fonts/plus-jakarta-sans";
+import { Unbounded_500Medium, Unbounded_700Bold, Unbounded_800ExtraBold } from "@expo-google-fonts/unbounded";
+import { useFonts } from "expo-font";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
+import { StatusBar } from "expo-status-bar";
+import * as SystemUI from "expo-system-ui";
+import React, { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { setBaseUrl } from "@/lib/api-client";
-import { AuthProvider } from "@/lib/auth-context";
-import { BillingProvider } from "@/lib/billing";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { useUpdateRequired } from "@/lib/api";
+import { setBaseUrl } from "@/lib/api-client";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { BillingProvider } from "@/lib/billing";
+import { HistoryProvider } from "@/lib/history-store";
+import { onSessionExpired } from "@/lib/session-events";
+import { SettingsProvider, useSettings } from "@/lib/settings";
+import { Dialog } from "@/ui/components";
+import { Splash } from "@/ui/Splash";
+import { ThemeProvider, useTheme } from "@/ui/theme";
+import { UpdateRequired } from "@/ui/UpdateRequired";
 
 setBaseUrl(`https://${process.env.EXPO_PUBLIC_DOMAIN}`);
 
@@ -22,53 +34,108 @@ SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
-function RootLayoutNav() {
+function SessionExpiredDialog() {
+  const { isSignedIn, signOut } = useAuth();
+  const router = useRouter();
+  const [visible, setVisible] = useState(false);
+  useEffect(() => onSessionExpired(() => setVisible(true)), []);
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="sign-in" options={{ headerShown: false }} />
-      <Stack.Screen name="onboarding" options={{ headerShown: false }} />
-      <Stack.Screen name="paywall" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="result"
-        options={{
-          headerShown: false,
-          presentation: "modal",
-        }}
-      />
-    </Stack>
+    <Dialog
+      visible={visible && isSignedIn}
+      icon="lock-closed"
+      title="Sign in again"
+      message="For your security you’ve been signed out. Your scans and history are safe."
+      primary={{
+        title: "Sign in",
+        onPress: async () => {
+          setVisible(false);
+          await signOut();
+          router.replace("/sign-in");
+        },
+      }}
+    />
+  );
+}
+
+function AppShell() {
+  const t = useTheme();
+  const updateRequired = useUpdateRequired();
+
+  useEffect(() => {
+    SystemUI.setBackgroundColorAsync(t.bg).catch(() => {});
+  }, [t.bg]);
+
+  if (updateRequired) {
+    return (
+      <>
+        <StatusBar style="light" />
+        <UpdateRequired />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <StatusBar style={t.isDark ? "light" : "dark"} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: t.bg }, animation: "slide_from_right" }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="welcome" options={{ animation: "fade" }} />
+        <Stack.Screen name="identifying" options={{ animation: "fade", gestureEnabled: false }} />
+        <Stack.Screen name="result" options={{ animation: "slide_from_bottom" }} />
+        <Stack.Screen name="paywall" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+        <Stack.Screen name="purchase-success" options={{ animation: "fade", gestureEnabled: false }} />
+        <Stack.Screen name="share" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
+      </Stack>
+      <SessionExpiredDialog />
+    </>
+  );
+}
+
+function Root() {
+  const { loaded: settingsLoaded } = useSettings();
+  const [fontsLoaded, fontError] = useFonts({
+    Unbounded_500Medium,
+    Unbounded_700Bold,
+    Unbounded_800ExtraBold,
+    PlusJakartaSans_400Regular,
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
+  });
+  const ready = (fontsLoaded || !!fontError) && settingsLoaded;
+
+  useEffect(() => {
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
+
+  if (!ready) return <Splash />;
+
+  return (
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <BillingProvider>
+          <HistoryProvider>
+            <AppShell />
+          </HistoryProvider>
+        </BillingProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 
 export default function RootLayout() {
-  const [fontsLoaded, fontError] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-  });
-
-  useEffect(() => {
-    if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded, fontError]);
-
-  if (!fontsLoaded && !fontError) return null;
-
   return (
-    <AuthProvider>
-      <SafeAreaProvider>
-        <ErrorBoundary>
-          <QueryClientProvider client={queryClient}>
-            <BillingProvider>
-              <GestureHandlerRootView style={{ flex: 1 }}>
-                <RootLayoutNav />
-              </GestureHandlerRootView>
-            </BillingProvider>
-          </QueryClientProvider>
-        </ErrorBoundary>
-      </SafeAreaProvider>
-    </AuthProvider>
+    <SafeAreaProvider>
+      <ErrorBoundary>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <SettingsProvider>
+            <AuthProvider>
+              <Root />
+            </AuthProvider>
+          </SettingsProvider>
+        </GestureHandlerRootView>
+      </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }

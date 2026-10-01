@@ -6,6 +6,8 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPhoneNumber,
+  sendPasswordResetEmail,
+  deleteUser,
   signOut as firebaseSignOut,
   GoogleAuthProvider,
   User,
@@ -67,6 +69,9 @@ type AuthContextValue = {
   // JS Firebase SDK we moved off of.
   sendPhoneOtp: (phoneNumber: string) => Promise<ConfirmationResult>;
   confirmPhoneOtp: (confirmation: ConfirmationResult, code: string) => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
+  // Deletes the Firebase account itself. May throw auth/requires-recent-login.
+  deleteAccount: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -117,6 +122,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     confirmPhoneOtp: async (confirmation, code) => {
       await confirmation.confirm(code);
+    },
+    sendPasswordReset: async (email) => {
+      await sendPasswordResetEmail(auth, email);
+    },
+    deleteAccount: async () => {
+      if (!auth.currentUser) return;
+      await deleteUser(auth.currentUser);
+      if (GoogleSignin) {
+        try {
+          await GoogleSignin.revokeAccess();
+        } catch {}
+      }
     },
     signOut: async () => {
       if (GoogleSignin) {

@@ -21,6 +21,9 @@ type BillingContextValue = {
   // A UPI/cash payment the store hasn't completed yet. The backend credits
   // it when Google reports it complete, even if the app is closed.
   pendingPayment: boolean;
+  // The store took the payment but our backend couldn't confirm it yet
+  // (network or server trouble). It is retried automatically.
+  unconfirmed: boolean;
   error: string | null;
   clearError: () => void;
   // Bumped each time a purchase is credited, so screens can react to it.
@@ -46,6 +49,7 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
   const [restoring, setRestoring] = useState(false);
   const [pendingPayment, setPendingPayment] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const [creditedCount, setCreditedCount] = useState(0);
   const inFlight = useRef(new Set<string>());
   // Purchases already credited this session, so a stale availablePurchases
@@ -89,6 +93,7 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
           }
           setPendingPayment(false);
           setError(null);
+          setUnconfirmed(false);
           await queryClient.invalidateQueries({ queryKey: ["profile"] });
           setCreditedCount((n) => n + 1);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -103,10 +108,10 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
           setError(data.error ?? "This purchase couldn't be verified.");
           return "rejected";
         }
-        setError("Payment received — we couldn't confirm it yet. We'll retry automatically, or tap Restore purchases.");
+        setUnconfirmed(true);
         return "retry";
       } catch {
-        setError("Payment received — we couldn't confirm it yet. We'll retry automatically, or tap Restore purchases.");
+        setUnconfirmed(true);
         return "retry";
       } finally {
         inFlight.current.delete(key);
@@ -211,6 +216,7 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
         purchasing,
         restoring,
         pendingPayment,
+        unconfirmed,
         error,
         clearError: () => setError(null),
         creditedCount,
@@ -231,6 +237,7 @@ const unavailable: BillingContextValue = {
   purchasing: false,
   restoring: false,
   pendingPayment: false,
+  unconfirmed: false,
   error: null,
   clearError: () => {},
   creditedCount: 0,

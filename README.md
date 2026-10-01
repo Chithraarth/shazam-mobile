@@ -20,8 +20,9 @@ npm run dev            # starts Expo; scan the QR with Expo Go
 
 ## Structure
 
-- `app/` — Expo Router screens: `(tabs)` (scan, history, account), sign-in, onboarding, paywall, result
+- `app/` — Expo Router screens: `(tabs)` (history, scan, me), `welcome` intro, `sign-in/` (method chooser, phone, email, forgot), onboarding + permissions, identifying, result, paywall and purchases, settings/help/about
 - `lib/billing.tsx` — Google Play / App Store scan-pack purchases (expo-iap), verified by the backend
-- `components/` — ScanButton, ConfidenceRing, error boundaries
+- `ui/` — Pulse design system: theme tokens (dark/light), components, tab bar
+- `components/` — country picker, vibe pickers, error boundaries
 - `lib/api-client/` — typed API client + React Query hooks (formerly `@workspace/api-client-react`)
 - `hooks/`, `constants/` — profile hook, colors

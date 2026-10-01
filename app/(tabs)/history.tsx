@@ -1,313 +1,196 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useState } from "react";
-import {
-  Alert,
-  FlatList,
-  Platform,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
+import { FlatList, Pressable, Text, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuth } from "@/lib/auth-context";
-import { useColors } from "@/hooks/useColors";
+import { useProfile } from "@/hooks/useProfile";
+import { HistoryItem, useHistory } from "@/lib/history-store";
+import { kindOf, ScanKind } from "@/lib/scan-types";
+import { Button, Card, Checkbox, Chip, Dialog, Gradient, IconButton, Poster, SearchField, Skeleton, Sticker, TextLink, Toast, Txt } from "@/ui/components";
+import { fonts, useHaptics, useTheme } from "@/ui/theme";
 
-export function historyKeyFor(userId: string | null | undefined) {
-  return `@shazam_history:${userId ?? "anon"}`;
-}
+type Filter = "all" | ScanKind;
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "movie", label: "Movies" },
+  { value: "show", label: "Shows" },
+  { value: "clip", label: "Reels & clips" },
+];
+const GAP = 6;
 
-export interface LocalHistoryItem {
-  id: string;
-  createdAt: string;
-  found: boolean;
-  confidence: number;
-  title: string | null;
-  type: string | null;
-  platform: string | null;
-  thumbnailData?: string | null;
-  resultData: string;
-}
-
-function ConfidenceDot({ confidence }: { confidence: number }) {
-  const color =
-    confidence >= 80 ? "#22c55e" : confidence >= 60 ? "#f59e0b" : "#ef4444";
+function Stat({ value, label, accent }: { value: string | number; label: string; accent?: boolean }) {
+  const t = useTheme();
   return (
-    <View style={{ alignItems: "center", gap: 2 }}>
-      <Text style={{ fontSize: 15, fontWeight: "700", color }}>{confidence}%</Text>
-      <Text style={{ fontSize: 10, color, letterSpacing: 0.5 }}>
-        {confidence >= 80 ? "HIGH" : confidence >= 60 ? "MED" : "LOW"}
-      </Text>
-    </View>
-  );
-}
-
-function HistoryRow({ item, onDelete }: { item: LocalHistoryItem; onDelete: () => void }) {
-  const colors = useColors();
-  const router = useRouter();
-
-  return (
-    <Pressable
-      onPress={() => router.push({ pathname: "/result", params: { resultData: item.resultData } })}
-      style={({ pressed }) => [
-        styles.row,
-        {
-          backgroundColor: colors.card,
-          borderColor: colors.border,
-          opacity: pressed ? 0.8 : 1,
-        },
-      ]}
-    >
-      <View
-        style={[
-          styles.thumb,
-          { backgroundColor: colors.muted, borderRadius: 10 },
-        ]}
-      >
-        {item.found ? (
-          <Ionicons name="film-outline" size={22} color={colors.primary} />
-        ) : (
-          <Ionicons name="help-circle-outline" size={22} color={colors.mutedForeground} />
-        )}
-      </View>
-      <View style={styles.rowContent}>
-        <Text style={[styles.rowTitle, { color: colors.foreground }]} numberOfLines={1}>
-          {item.title ?? "Unknown"}
-        </Text>
-        <Text style={[styles.rowMeta, { color: colors.mutedForeground }]} numberOfLines={1}>
-          {[item.type, item.platform].filter(Boolean).join(" · ") || "Not identified"}
-        </Text>
-        <Text style={[styles.rowDate, { color: colors.mutedForeground }]}>
-          {new Date(item.createdAt).toLocaleDateString()}
-        </Text>
-      </View>
-      <View style={styles.rowRight}>
-        <ConfidenceDot confidence={item.confidence} />
-        <Pressable
-          onPress={() => {
-            Alert.alert("Delete", "Remove this scan from history?", [
-              { text: "Cancel", style: "cancel" },
-              { text: "Delete", style: "destructive", onPress: onDelete },
-            ]);
-          }}
-          hitSlop={12}
-          style={styles.deleteBtn}
-        >
-          <Ionicons name="trash-outline" size={18} color={colors.mutedForeground} />
-        </Pressable>
-      </View>
-    </Pressable>
-  );
-}
-
-function StatsBar({ total, found }: { total: number; found: number }) {
-  const colors = useColors();
-  const rate = total > 0 ? Math.round((found / total) * 100) : 0;
-  return (
-    <View style={styles.statsRow}>
-      {[
-        { label: "Total Scans", value: String(total) },
-        { label: "Identified", value: String(found) },
-        { label: "Success Rate", value: `${rate}%` },
-      ].map(({ label, value }) => (
-        <View
-          key={label}
-          style={[
-            styles.statCard,
-            {
-              backgroundColor: "rgba(136,77,255,0.05)",
-              borderColor: "rgba(136,77,255,0.2)",
-            },
-          ]}
-        >
-          <Text style={[styles.statValue, { color: colors.primary }]}>{value}</Text>
-          <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>{label}</Text>
-        </View>
-      ))}
-    </View>
+    <Card padded style={{ flex: 1, paddingVertical: 12, gap: 0 }}>
+      <Text style={{ fontFamily: fonts.display[700], fontSize: 22, color: accent ? t.accent : t.ink }}>{value}</Text>
+      <Txt variant="caption" style={{ fontFamily: fonts.body[700], fontSize: 12 }}>{label}</Txt>
+    </Card>
   );
 }
 
 export default function HistoryScreen() {
-  const colors = useColors();
+  const t = useTheme();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
-  const historyKey = historyKeyFor(user?.uid);
-  const [history, setHistory] = useState<LocalHistoryItem[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
+  const router = useRouter();
+  const haptics = useHaptics();
+  const { width } = useWindowDimensions();
+  const { items, loaded, remove, restore, clear } = useHistory();
+  const { data: profile } = useProfile();
+  const [filter, setFilter] = useState<Filter>("all");
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [undo, setUndo] = useState<HistoryItem[] | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
+  useEffect(() => {
+    if (!undo) return;
+    const timer = setTimeout(() => setUndo(null), 5000);
+    return () => clearTimeout(timer);
+  }, [undo]);
 
-  const load = useCallback(async () => {
-    try {
-      const raw = await AsyncStorage.getItem(historyKey);
-      const data: LocalHistoryItem[] = raw ? JSON.parse(raw) : [];
-      setHistory(data);
-    } catch {
-      setHistory([]);
-    }
-  }, [historyKey]);
+  const tile = (width - 40 - GAP * 2) / 3;
+  const found = items.filter((i) => i.result.found).length;
+  const rate = items.length ? Math.round((found / items.length) * 100) : 0;
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return items.filter((i) => {
+      if (filter !== "all" && (!i.result.found || kindOf(i.result.type) !== filter)) return false;
+      if (!q) return true;
+      const r = i.result;
+      return [r.title, r.creator, r.creatorHandle, r.platform, ...(r.cast ?? []).map((c) => c.name)]
+        .filter(Boolean)
+        .some((s) => String(s).toLowerCase().includes(q));
+    });
+  }, [items, filter, query]);
+
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  const deleteSelected = () => {
+    if (!selected.length) return;
+    haptics.warning();
+    setUndo(remove(selected));
+    setSelected([]);
+    setSelecting(false);
+  };
+
+  const header = (
+    <View style={{ gap: 14, paddingBottom: 14 }}>
+      {selecting ? (
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 44 }}>
+          <TextLink title="Cancel" onPress={() => { setSelecting(false); setSelected([]); }} style={{ paddingVertical: 0 }} />
+          <Txt variant="strong">{selected.length} selected</Txt>
+          <TextLink title="Delete" color={t.danger} onPress={deleteSelected} style={{ paddingVertical: 0, opacity: selected.length ? 1 : 0.4 }} />
+        </View>
+      ) : (
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 44 }}>
+          <Txt variant="title">Your scans</Txt>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <IconButton icon={searching ? "close" : "search"} label={searching ? "Close search" : "Search"} onPress={() => { setSearching((s) => !s); setQuery(""); }} />
+            {items.length ? <IconButton icon="checkmark-done" label="Select scans" onPress={() => setSelecting(true)} /> : null}
+          </View>
+        </View>
+      )}
+      {searching && !selecting ? <SearchField value={query} onChangeText={setQuery} placeholder="Title, actor, creator or app" autoFocus /> : null}
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <Stat value={items.length} label="scans" />
+        <Stat value={`${rate}%`} label="found" accent />
+        <Stat value={profile?.scansRemaining ?? "–"} label="left" />
+      </View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        {FILTERS.map((f) => <Chip key={f.value} label={f.label} selected={filter === f.value} onPress={() => setFilter(f.value)} />)}
+      </View>
+      {selecting ? <TextLink title="Clear all history" color={t.danger} onPress={() => setConfirmClear(true)} style={{ textAlign: "left", paddingVertical: 0 }} /> : null}
+    </View>
   );
 
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }, [load]);
-
-  const handleDelete = useCallback(async (id: string) => {
-    try {
-      const raw = await AsyncStorage.getItem(historyKey);
-      const data: LocalHistoryItem[] = raw ? JSON.parse(raw) : [];
-      const updated = data.filter((item) => item.id !== id);
-      await AsyncStorage.setItem(historyKey, JSON.stringify(updated));
-      setHistory(updated);
-    } catch {
-      /* ignore */
-    }
-  }, [historyKey]);
-
-  const handleClearAll = useCallback(() => {
-    Alert.alert("Clear History", "Delete all scan history?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Clear All",
-        style: "destructive",
-        onPress: async () => {
-          await AsyncStorage.removeItem(historyKey);
-          setHistory([]);
-        },
-      },
-    ]);
-  }, [historyKey]);
-
-  const found = history.filter((h) => h.found).length;
-
-  return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View
-        style={[
-          styles.header,
-          {
-            paddingTop: topPad + 16,
-            borderBottomColor: colors.border,
-            backgroundColor: colors.background,
-          },
-        ]}
+  const renderItem = ({ item }: { item: HistoryItem }) => {
+    const r = item.result;
+    const isSel = selected.includes(item.id);
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={r.found ? r.title ?? "Scan" : "No match"}
+        onLongPress={() => { haptics.press(); setSelecting(true); toggle(item.id); }}
+        onPress={() => (selecting ? toggle(item.id) : router.push({ pathname: "/result", params: { id: item.id } }))}
+        style={{ width: tile, height: tile * 1.5 }}
       >
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>History</Text>
-        {history.length > 0 && (
-          <Pressable onPress={handleClearAll} hitSlop={12}>
-            <Text style={[styles.clearBtn, { color: colors.mutedForeground }]}>Clear all</Text>
-          </Pressable>
+        {r.found ? (
+          <Poster uri={item.thumbUri} seed={r.title ?? item.id} style={{ flex: 1, borderRadius: 14, borderWidth: isSel ? 3 : 0, borderColor: t.pink, opacity: selecting && !isSel ? 0.6 : 1 }}>
+            <View style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: 8, paddingTop: 24, backgroundColor: "rgba(0,0,0,0.35)" }}>
+              <Text numberOfLines={1} style={{ fontFamily: fonts.body[800], fontSize: 11, color: "#fff" }}>{r.title ?? r.creator ?? ""}</Text>
+            </View>
+            <Sticker label={`${r.confidence}%`} size={10} rotate={-4} style={{ position: "absolute", left: 6, top: 8 }} />
+            {kindOf(r.type) === "clip" ? (
+              <View style={{ position: "absolute", right: 6, top: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center" }}>
+                <Ionicons name="play" size={11} color="#fff" />
+              </View>
+            ) : null}
+          </Poster>
+        ) : (
+          <View style={{ flex: 1, borderRadius: 14, backgroundColor: t.surface2, alignItems: "center", justifyContent: "center", gap: 4, borderWidth: isSel ? 3 : 0, borderColor: t.pink }}>
+            <Text style={{ fontFamily: fonts.display[700], fontSize: 28, color: t.muted }}>?</Text>
+            <Txt variant="caption" style={{ fontSize: 11 }}>No match</Txt>
+          </View>
+        )}
+        {selecting ? <View style={{ position: "absolute", right: 8, top: 8 }}><Checkbox checked={isSel} /></View> : null}
+      </Pressable>
+    );
+  };
+
+  const empty = !loaded ? (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: GAP }}>
+      {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} width={tile} height={tile * 1.5} radius={14} />)}
+    </View>
+  ) : items.length === 0 ? (
+    <View style={{ alignItems: "center", gap: 16, paddingTop: 40 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, width: 210, transform: [{ rotate: "-6deg" }] }}>
+        {Array.from({ length: 6 }, (_, i) =>
+          i === 1 ? <Gradient key={i} style={{ width: 66, height: 88, borderRadius: 14, opacity: 0.85 }} /> : <View key={i} style={{ width: 66, height: 88, borderRadius: 14, backgroundColor: t.surface2 }} />,
         )}
       </View>
+      <Txt variant="title" size={24} center>
+        Your grid is <Txt variant="title" size={24} color="accent">empty</Txt>
+      </Txt>
+      <Txt center style={{ maxWidth: 270 }}>Scan something and it’ll show up here, ready to find again.</Txt>
+      <Button title="Scan something" onPress={() => router.navigate("/")} style={{ width: 220 }} />
+    </View>
+  ) : (
+    <Txt center style={{ paddingTop: 30 }}>Nothing matches that.</Txt>
+  );
 
+  return (
+    <View style={{ flex: 1, backgroundColor: t.bg }}>
       <FlatList
-        data={history}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={[
-          styles.list,
-          { paddingBottom: Platform.OS === "web" ? 34 + 84 : 100 },
-        ]}
-        scrollEnabled={history.length > 0}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor={colors.primary}
-          />
-        }
-        ListHeaderComponent={
-          history.length > 0 ? <StatsBar total={history.length} found={found} /> : null
-        }
-        renderItem={({ item }) => (
-          <HistoryRow item={item} onDelete={() => handleDelete(item.id)} />
-        )}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <View style={[styles.emptyIcon, { backgroundColor: colors.muted }]}>
-              <Ionicons name="film-outline" size={40} color={colors.mutedForeground} />
-            </View>
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No scans yet</Text>
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Scan a screen or upload a photo to identify movies and shows
-            </Text>
-          </View>
-        }
+        data={loaded ? visible : []}
+        keyExtractor={(i) => i.id}
+        renderItem={renderItem}
+        numColumns={3}
+        columnWrapperStyle={{ gap: GAP }}
+        ItemSeparatorComponent={() => <View style={{ height: GAP }} />}
+        ListHeaderComponent={header}
+        ListEmptyComponent={empty}
+        contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 20, paddingBottom: insets.bottom + 120 }}
+        showsVerticalScrollIndicator={false}
+      />
+      {undo ? (
+        <Toast
+          message={`${undo.length} scan${undo.length === 1 ? "" : "s"} deleted`}
+          actionLabel="Undo"
+          onAction={() => { restore(undo); setUndo(null); }}
+          bottom={insets.bottom + 100}
+        />
+      ) : null}
+      <Dialog
+        visible={confirmClear}
+        title="Clear all history?"
+        message={`This removes all ${items.length} scans from this phone. It can’t be undone.`}
+        primary={{ title: "Clear all", variant: "danger", onPress: async () => { setConfirmClear(false); setSelecting(false); setSelected([]); await clear(); } }}
+        secondary={{ title: "Cancel", onPress: () => setConfirmClear(false) }}
+        onClose={() => setConfirmClear(false)}
       />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  headerTitle: { fontSize: 28, fontWeight: "700" },
-  clearBtn: { fontSize: 15 },
-  list: { paddingHorizontal: 16, paddingTop: 12, gap: 10, flexGrow: 1 },
-  statsRow: { flexDirection: "row", gap: 8, marginBottom: 8 },
-  statCard: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-    gap: 2,
-  },
-  statValue: { fontSize: 18, fontWeight: "700" },
-  statLabel: { fontSize: 11, textAlign: "center" },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  thumb: {
-    width: 48,
-    height: 48,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  rowContent: { flex: 1, gap: 3 },
-  rowTitle: { fontSize: 15, fontWeight: "600" },
-  rowMeta: { fontSize: 13 },
-  rowDate: { fontSize: 12 },
-  rowRight: { alignItems: "flex-end", gap: 8 },
-  deleteBtn: { padding: 4 },
-  empty: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 16,
-    paddingHorizontal: 40,
-    paddingTop: 80,
-  },
-  emptyIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyTitle: { fontSize: 20, fontWeight: "600" },
-  emptyText: { fontSize: 15, textAlign: "center", lineHeight: 22 },
-});
