@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
-import { useIAP, type Product, type Purchase } from "expo-iap";
+import { useIAP, type Product, type Purchase } from "react-native-iap";
 import React, { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { AppState, Platform } from "react-native";
 import { useAuth } from "@/lib/auth-context";
@@ -73,7 +73,7 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
 
       try {
         const body = Platform.OS === "ios"
-          ? { platform: "ios", productId: purchase.productId, transactionId: purchase.id }
+          ? { platform: "ios", productId: purchase.productId, signedTransaction: purchase.purchaseToken }
           : { platform: "android", productId: purchase.productId, purchaseToken: purchase.purchaseToken };
 
         const res = await authedFetch("/api/billing/verify", { method: "POST", body: JSON.stringify(body) });

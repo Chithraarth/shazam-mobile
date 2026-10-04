@@ -26,7 +26,9 @@
       },
       "entitlements": {
         "aps-environment": "production"
-      }
+      },
+      "appleTeamId": "UZKCN9NQ7G",
+      "buildNumber": "2"
     },
     "android": {
       "package": "com.videofy.app",
@@ -71,7 +73,6 @@
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
       "expo-localization",
-      "expo-iap",
       [
         "expo-share-intent",
         {
