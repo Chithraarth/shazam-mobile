@@ -93,6 +93,19 @@ export default function Paywall() {
   }
 
   const canBuy = billing.available && billing.connected && !!billing.product;
+  // Per-scan price in the store's own currency, so it always matches the
+  // price shown below (₹ in India, $ in the US, ...).
+  const perScan = (() => {
+    const { price, currency } = (billing.product ?? {}) as { price?: number | null; currency?: string };
+    if (!price || !currency) return Platform.OS === "web" ? null : "≈ ₹10 / scan";
+    try {
+      const each = new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: price / SCANS_PER_PACK < 1 ? 2 : 0 })
+        .format(price / SCANS_PER_PACK);
+      return `≈ ${each} / scan`;
+    } catch {
+      return null;
+    }
+  })();
 
   return (
     <View style={{ flex: 1, backgroundColor: t.bg }}>
@@ -110,7 +123,7 @@ export default function Paywall() {
             <Text style={{ fontFamily: fonts.display[800], fontSize: 132, lineHeight: 136, color: "#fff", letterSpacing: -4 }}>{SCANS_PER_PACK}</Text>
             <Text style={{ fontFamily: fonts.display[700], fontSize: 28, color: "#fff" }}>more scans</Text>
           </View>
-          <Sticker label="≈ ₹10 / scan" size={14} style={{ position: "absolute", right: 24, bottom: 40 }} />
+          {perScan ? <Sticker label={perScan} size={14} style={{ position: "absolute", right: 24, bottom: 40 }} /> : null}
         </Gradient>
 
         <View style={{ padding: 20, gap: 16, flex: 1 }}>

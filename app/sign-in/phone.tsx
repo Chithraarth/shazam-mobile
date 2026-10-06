@@ -2,7 +2,7 @@ import type { ConfirmationResult } from "@react-native-firebase/auth";
 import * as Localization from "expo-localization";
 import { Redirect } from "expo-router";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { CountryCodeSelect } from "@/components/CountryCodeSelect";
 import { useAuth } from "@/lib/auth-context";
@@ -33,6 +33,9 @@ export default function PhoneSignIn() {
   const [busy, setBusy] = useState<"send" | "verify" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { left, start } = useCountdown();
+  // A code can only be confirmed once: typing the 6th digit verifies
+  // automatically, so a tap on Verify (or SMS autofill) must not send it again.
+  const verifying = useRef(false);
 
   if (isSignedIn) return <Redirect href="/" />;
 
@@ -58,15 +61,19 @@ export default function PhoneSignIn() {
   };
 
   const verify = async (value = code) => {
-    if (!confirmation || value.length !== CODE_LENGTH) return;
+    if (!confirmation || value.length !== CODE_LENGTH || verifying.current) return;
+    verifying.current = true;
     setError(null);
     setBusy("verify");
     try {
       await confirmPhoneOtp(confirmation, value);
       // The auth listener takes it from here; the tabs gate routes onward.
     } catch (err) {
+      console.warn("Phone OTP confirm failed", (err as { code?: string })?.code, err);
       setError(firebaseErrorMessage(err));
       setBusy(null);
+    } finally {
+      verifying.current = false;
     }
   };
 

@@ -39,8 +39,14 @@ export function firebaseErrorMessage(err: unknown): string | null {
       return "For your security, please sign in again and then retry.";
     case "auth/missing-verification-code":
       return "Please enter the verification code.";
+    case "auth/session-expired":
+      return "That code has expired. Please request a new one.";
+    case "auth/missing-verification-id":
+    case "auth/invalid-verification-id":
+      return "Please request a new code and try again.";
     default:
-      return "Something went wrong. Please try again.";
+      // Include the code so an unexpected failure can be diagnosed.
+      return code ? `Something went wrong (${code}). Please try again.` : "Something went wrong. Please try again.";
   }
 }
 
