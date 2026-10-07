@@ -28,7 +28,7 @@
         "aps-environment": "production"
       },
       "appleTeamId": "UZKCN9NQ7G",
-      "buildNumber": "3"
+      "buildNumber": "4"
     },
     "android": {
       "package": "com.videofy.app",
