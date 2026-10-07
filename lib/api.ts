@@ -13,6 +13,8 @@ export class ApiError extends Error {
   }
 }
 
+const IDENTIFY_TIMEOUT_MS = 60_000;
+
 export function useIdentify() {
   const authedFetch = useAuthedFetch();
   return async (imageData: string): Promise<IdentifyResult> => {
@@ -21,8 +23,15 @@ export function useIdentify() {
       res = await authedFetch("/api/identify", {
         method: "POST",
         body: JSON.stringify({ imageData, mimeType: "image/jpeg", region: deviceRegion() }),
+        // Identification usually takes 10–20s (AI call plus catalog lookup),
+        // far longer than ordinary requests.
+        timeoutMs: IDENTIFY_TIMEOUT_MS,
       });
-    } catch {
+    } catch (err) {
+      // The server refunds the scan if we hang up before it answers.
+      if ((err as { name?: string })?.name === "AbortError") {
+        throw new ApiError("failed", "That took longer than usual. Your scan wasn’t used — please try again.");
+      }
       throw new ApiError("offline", "We couldn’t reach Videofy. Check your connection — nothing was charged.");
     }
     if (res.status === 402) throw new ApiError("out_of_scans", "You’re out of scans.");

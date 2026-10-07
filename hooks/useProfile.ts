@@ -44,20 +44,21 @@ export type Profile = {
 export function useAuthedFetch() {
   const { user } = useAuth();
   return useCallback(
-    async (path: string, init?: RequestInit) => {
+    async (path: string, init?: RequestInit & { timeoutMs?: number }) => {
+      const { timeoutMs = REQUEST_TIMEOUT_MS, ...fetchInit } = init ?? {};
       const token = user
         ? await withTimeout(user.getIdToken(), "Timed out refreshing your sign-in")
         : undefined;
 
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await fetch(`${apiBase()}${path}`, {
-          ...init,
+          ...fetchInit,
           signal: controller.signal,
           headers: {
             "Content-Type": "application/json",
-            ...(init?.headers as Record<string, string>),
+            ...(fetchInit.headers as Record<string, string>),
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
         });
