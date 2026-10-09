@@ -45,7 +45,7 @@ export default function Identifying() {
       setTimeout(() => { setStage(2); setProgress(0.7); }, 2600),
     ];
     try {
-      const result = await identify(frame.base64);
+      const result = await identify(frame.base64, frame.extraFrames);
       timers.forEach(clearTimeout);
       setProgress(1);
       const item = await history.add(result, frame.base64);

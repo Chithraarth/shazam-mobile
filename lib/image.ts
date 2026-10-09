@@ -8,13 +8,13 @@ export type PreparedImage = { base64: string; uri: string };
 
 // Shrinks the image so its longest edge is at most MAX_IMAGE_EDGE and
 // re-encodes it as JPEG. Images already small enough are only re-encoded.
-export async function prepareImage(uri: string, width?: number, height?: number): Promise<PreparedImage> {
+export async function prepareImage(uri: string, width?: number, height?: number, maxEdge = MAX_IMAGE_EDGE): Promise<PreparedImage> {
   const longest = Math.max(width ?? 0, height ?? 0);
   const actions: ImageManipulator.Action[] = [];
-  if (!longest || longest > MAX_IMAGE_EDGE) {
+  if (!longest || longest > maxEdge) {
     // When the size is unknown, width is assumed to be the longest edge.
     actions.push({
-      resize: (height ?? 0) > (width ?? 0) ? { height: MAX_IMAGE_EDGE } : { width: MAX_IMAGE_EDGE },
+      resize: (height ?? 0) > (width ?? 0) ? { height: maxEdge } : { width: maxEdge },
     });
   }
   const result = await ImageManipulator.manipulateAsync(uri, actions, {

@@ -17,12 +17,12 @@ const IDENTIFY_TIMEOUT_MS = 60_000;
 
 export function useIdentify() {
   const authedFetch = useAuthedFetch();
-  return async (imageData: string): Promise<IdentifyResult> => {
+  return async (imageData: string, extraFrames?: string[]): Promise<IdentifyResult> => {
     let res: Response;
     try {
       res = await authedFetch("/api/identify", {
         method: "POST",
-        body: JSON.stringify({ imageData, mimeType: "image/jpeg", region: deviceRegion() }),
+        body: JSON.stringify({ imageData, extraFrames, mimeType: "image/jpeg", region: deviceRegion() }),
         // Identification usually takes 10–20s (AI call plus catalog lookup),
         // far longer than ordinary requests.
         timeoutMs: IDENTIFY_TIMEOUT_MS,

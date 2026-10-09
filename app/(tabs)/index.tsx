@@ -17,6 +17,18 @@ import { fonts, useHaptics, useTheme } from "@/ui/theme";
 
 type Mode = "photo" | "camera" | "recording";
 
+type Photo = { uri: string; width: number; height: number };
+
+// A camera scan watches the screen for this long, taking a frame every
+// SHOT_EVERY_MS, so the answer can use clues from several moments (a title
+// card, a face, a caption) instead of a single shot.
+const SCAN_SECONDS = 15;
+const SHOT_EVERY_MS = 2500;
+// Frames after the main one are sent smaller to keep the upload light.
+const EXTRA_FRAME_EDGE = 1024;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 function Corner({ pos, color }: { pos: "tl" | "tr" | "bl" | "br"; color: string }) {
   const size = 40;
   const w = 4;
@@ -52,9 +64,14 @@ export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const [ready, setReady] = useState(false);
-  const [facing, setFacing] = useState<"back" | "front">("back");
+  // Scanning always uses the back camera, which faces the screen.
+  const facing = "back" as const;
   const [torch, setTorch] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Seconds left in a running camera scan, or null when not scanning.
+  const [scanLeft, setScanLeft] = useState<number | null>(null);
+  const [shots, setShots] = useState(0);
+  const cancelled = useRef(false);
   const [error, setError] = useState<string | null>(null);
   // A captured frame that looked too dark or blurry, waiting for the user
   // to retake it or scan it anyway (design screen 24).
@@ -88,39 +105,84 @@ export default function ScanScreen() {
     [router],
   );
 
+  const takeShot = useCallback(async (): Promise<Photo | undefined> => {
+    // Some Android camera stacks (notably ColorOS) throw a one-off "Aborted";
+    // a retry covers genuinely transient failures.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await cameraRef.current?.takePictureAsync({ quality: 0.7, shutterSound: false });
+      } catch {
+        await sleep(300);
+      }
+    }
+    return undefined;
+  }, []);
+
   const capture = useCallback(async () => {
     if (busy || !preflight()) return;
     if (!granted || !cameraRef.current) return;
     setBusy(true);
+    cancelled.current = false;
+    setShots(0);
+    const taken: { photo: Photo; quality: FrameQuality | null }[] = [];
+    const started = Date.now();
+    const elapsed = () => Date.now() - started;
+    setScanLeft(SCAN_SECONDS);
+    const ticker = setInterval(() => setScanLeft(Math.max(0, Math.ceil(SCAN_SECONDS - elapsed() / 1000))), 250);
+    haptics.press();
     try {
-      if (!ready) await new Promise((r) => setTimeout(r, 500));
-      // Some Android camera stacks (notably ColorOS) throw a one-off "Aborted";
-      // a couple of retries covers genuinely transient failures.
-      let photo: { uri: string; width: number; height: number } | undefined;
-      let lastErr: unknown;
-      for (let attempt = 0; attempt < 3 && !photo; attempt++) {
-        try {
-          photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
-        } catch (err) {
-          lastErr = err;
-          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      if (!ready) await sleep(500);
+      while (elapsed() < SCAN_SECONDS * 1000 && !cancelled.current) {
+        const shotAt = Date.now();
+        const photo = await takeShot();
+        if (photo) {
+          taken.push({ photo, quality: await checkFrameQuality(photo.uri) });
+          setShots(taken.length);
         }
+        const wait = Math.min(SHOT_EVERY_MS - (Date.now() - shotAt), SCAN_SECONDS * 1000 - elapsed());
+        // Sleep in short steps so Cancel responds quickly.
+        for (let w = 0; w < wait && !cancelled.current; w += 250) await sleep(Math.min(250, wait - w));
       }
-      if (!photo) throw lastErr ?? new Error("Camera capture failed");
-      const quality = await checkFrameQuality(photo.uri);
-      if (quality && (quality.dark || quality.blurry)) {
+    } finally {
+      clearInterval(ticker);
+      setScanLeft(null);
+    }
+
+    try {
+      if (cancelled.current) return;
+      if (!taken.length) throw new Error("No frames captured");
+      const usable = taken.filter((s) => !s.quality || !(s.quality.dark || s.quality.blurry));
+      if (!usable.length) {
+        // Every frame was too dark or blurry: show the sharpest so the user
+        // can retake with the flash, or scan it anyway.
+        const best = [...taken].sort((x, y) => (y.quality?.sharpness ?? 0) - (x.quality?.sharpness ?? 0))[0];
         haptics.warning();
-        setWeak({ photo, quality });
+        setWeak({ photo: best.photo, quality: best.quality! });
         return;
       }
-      await identifyPhoto(photo);
+      // The sharpest frame leads (it becomes the history thumbnail); the
+      // rest add context.
+      const [main, ...rest] = [...usable].sort((x, y) => (y.quality?.sharpness ?? 0) - (x.quality?.sharpness ?? 0));
+      const frame = await prepareImage(main.photo.uri, main.photo.width, main.photo.height);
+      const extras = await Promise.all(rest.map((s) => prepareImage(s.photo.uri, s.photo.width, s.photo.height, EXTRA_FRAME_EDGE)));
+      haptics.success();
+      setPendingFrame({ ...frame, source: "camera", extraFrames: extras.map((e) => e.base64) });
+      router.push("/identifying");
     } catch {
       haptics.error();
       setError("Camera wasn’t ready — try again, or upload a photo instead.");
     } finally {
       setBusy(false);
     }
-  }, [busy, preflight, granted, ready, haptics, identifyPhoto]);
+  }, [busy, preflight, granted, ready, haptics, takeShot, router]);
+
+  const cancelScan = useCallback(() => {
+    cancelled.current = true;
+    haptics.tap();
+  }, [haptics]);
+
+  // Leaving the tab stops a running scan without charging anything.
+  useFocusEffect(useCallback(() => () => { cancelled.current = true; }, []));
 
   const pickPhoto = useCallback(async () => {
     if (busy || !preflight()) return;
@@ -215,7 +277,7 @@ export default function ScanScreen() {
               <Txt variant="title" center>
                 Camera, <Txt variant="title" color="accent">please?</Txt>
               </Txt>
-              <Txt center>Just one photo of the screen when you tap Scan. No video, no sound, never in the background.</Txt>
+              <Txt center>When you tap Scan, Videofy takes a few photos of the screen over 15 seconds. No video, no sound.</Txt>
               <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
                 <Chip label="Only when you tap" icon="checkmark-circle" small />
                 <Chip label="No recording" icon="checkmark-circle" small />
@@ -292,7 +354,6 @@ export default function ScanScreen() {
         {scansPill}
         <View style={{ flexDirection: "row", gap: 8 }}>
           <IconButton icon={torch ? "flash" : "flash-outline"} label={torch ? "Turn flash off" : "Turn flash on"} variant={torch ? "lime" : "glass"} onPress={() => setTorch((v) => !v)} />
-          <IconButton icon="camera-reverse-outline" label="Switch camera" variant="glass" onPress={() => { setReady(false); setFacing((f) => (f === "back" ? "front" : "back")); }} />
         </View>
       </View>
 
@@ -301,12 +362,27 @@ export default function ScanScreen() {
         <Corner pos="tr" color="#FF5CAD" />
         <Corner pos="bl" color="#F0600A" />
         <Corner pos="br" color="#F0600A" />
-        {busy ? (
+        {busy && scanLeft === null ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
             <ActivityIndicator color="#fff" size="large" />
           </View>
         ) : null}
       </View>
+
+      {scanLeft !== null ? (
+        <View style={{ position: "absolute", left: 22, right: 22, top: insets.top + 130, bottom: insets.bottom + 230, alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <View style={{ width: 132, height: 132, borderRadius: 66, backgroundColor: "rgba(13,11,20,0.55)", alignItems: "center", justifyContent: "center" }}>
+            <Text accessibilityLiveRegion="polite" style={{ fontFamily: fonts.display[800], fontSize: 54, color: "#fff" }}>{scanLeft}</Text>
+          </View>
+          <View style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: "rgba(13,11,20,0.6)", alignItems: "center" }}>
+            <Text style={{ fontFamily: fonts.body[800], fontSize: 15, color: "#fff" }}>Hold steady on the screen</Text>
+            <Text style={{ fontFamily: fonts.body[600], fontSize: 12, color: "rgba(255,255,255,0.75)" }}>{shots} {shots === 1 ? "frame" : "frames"} captured</Text>
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Cancel scan" onPress={cancelScan} hitSlop={10} style={{ marginTop: 6, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.9)" }}>
+            <Text style={{ fontFamily: fonts.body[800], fontSize: 14, color: "#0D0B14" }}>Cancel</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <View style={{ position: "absolute", left: 20, right: 20, bottom: insets.bottom + 110, gap: 14 }}>
         {!online ? <OfflineBanner /> : null}
@@ -317,7 +393,7 @@ export default function ScanScreen() {
           </Pressable>
         ) : (
           <View style={{ alignSelf: "center", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: "rgba(13,11,20,0.6)" }}>
-            <Text style={{ fontFamily: fonts.body[700], fontSize: 14, color: "#fff" }}>Point at any screen, then tap Scan</Text>
+            <Text style={{ fontFamily: fonts.body[700], fontSize: 14, color: "#fff" }}>Point at the screen and tap Scan · 15 sec</Text>
           </View>
         )}
         {modeSwitcher}
