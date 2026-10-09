@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 import { apiBase, useAuthedFetch } from "@/hooks/useProfile";
 import type { IdentifyResult } from "@/lib/scan-types";
 
-const deviceRegion = () => Localization.getLocales()[0]?.regionCode ?? "IN";
+export const deviceRegion = () => Localization.getLocales()[0]?.regionCode ?? "IN";
 
 export class ApiError extends Error {
   constructor(readonly code: "out_of_scans" | "unauthorized" | "failed" | "offline", message: string) {

@@ -19,6 +19,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useUpdateRequired } from "@/lib/api";
 import { ShareIntentHandler, WidgetSync } from "@/lib/app-effects";
 import { PushManager } from "@/lib/push";
+import { BackgroundScanSync } from "@/lib/background-scan";
 import { ShareIntentProvider } from "expo-share-intent";
 import { setBaseUrl } from "@/lib/api-client";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
@@ -91,6 +92,7 @@ function AppShell() {
       </Stack>
       <SessionExpiredDialog />
       <PushManager />
+      <BackgroundScanSync />
       <ShareIntentHandler />
       <WidgetSync />
     </>

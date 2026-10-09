@@ -1,0 +1,8 @@
+{
+  "name": "videofy-broadcast",
+  "version": "1.0.0",
+  "description": "Background screen scan for Videofy (iOS broadcast extension, Android MediaProjection)",
+  "main": "index.ts",
+  "license": "UNLICENSED",
+  "private": true
+}

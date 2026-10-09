@@ -28,7 +28,7 @@
         "aps-environment": "production"
       },
       "appleTeamId": "UZKCN9NQ7G",
-      "buildNumber": "4"
+      "buildNumber": "5"
     },
     "android": {
       "package": "com.videofy.app",
@@ -89,6 +89,7 @@
           ]
         }
       ],
+      "./plugins/with-broadcast-extension.js",
       [
         "react-native-android-widget",
         {

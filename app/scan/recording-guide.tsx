@@ -2,7 +2,9 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
-import { Platform, Text, View } from "react-native";
+import { Alert, Platform, Text, View } from "react-native";
+import { isBackgroundScanSupported, startBackgroundScan } from "videofy-broadcast";
+import { useProfile } from "@/hooks/useProfile";
 import { Button, Card, Gradient, Screen, Segmented, TopBar, Txt } from "@/ui/components";
 import { fonts, useTheme } from "@/ui/theme";
 
@@ -24,6 +26,24 @@ export default function RecordingGuide() {
   const router = useRouter();
   const [os, setOs] = useState<"android" | "ios">(Platform.OS === "ios" ? "ios" : "android");
   const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const { data: profile } = useProfile();
+  const liveSupported = isBackgroundScanSupported();
+
+  const startLive = async () => {
+    if ((profile?.scansRemaining ?? 0) <= 0) {
+      router.push("/paywall");
+      return;
+    }
+    setStarting(true);
+    try {
+      await startBackgroundScan();
+    } catch (e) {
+      Alert.alert("Couldn’t start the scan", e instanceof Error ? e.message : "Please try again.");
+    } finally {
+      setStarting(false);
+    }
+  };
 
   const choose = async () => {
     setBusy(true);
@@ -44,6 +64,23 @@ export default function RecordingGuide() {
       <Txt variant="title">
         Playing on <Txt variant="title" color="accent">this phone?</Txt>
       </Txt>
+      {liveSupported ? (
+        <Card padded style={{ gap: 10 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Gradient style={{ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name="radio-outline" size={18} color="#fff" />
+            </Gradient>
+            <Txt variant="strong" style={{ flex: 1 }}>Scan while you watch</Txt>
+          </View>
+          <Txt variant="caption">
+            {Platform.OS === "ios"
+              ? "Tap Start, choose Videofy and Start Broadcast, then open the video. Videofy watches for 15 seconds and sends you the answer as a notification."
+              : "Tap Start and allow screen capture, then open the video. Videofy watches for 15 seconds and sends you the answer as a notification."}
+          </Txt>
+          <Button title="Start background scan · 1 scan" icon="radio-outline" onPress={startLive} loading={starting} />
+        </Card>
+      ) : null}
+      <Txt variant="strong" color="muted">Or use a screen recording</Txt>
       <Segmented value={os} onChange={setOs} options={[{ value: "android", label: "Android" }, { value: "ios", label: "iPhone" }]} />
       <View style={{ gap: 12 }}>
         {STEPS[os].map((s, i) => (
