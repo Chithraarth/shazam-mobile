@@ -9,7 +9,7 @@ type Topic = "Scanning" | "Payments" | "Account" | "Privacy";
 
 const FAQ: { topic: Topic; q: string; a: string }[] = [
   { topic: "Scanning", q: "How do I get the best match?", a: "Scan a moment with a face or subtitles on screen, fill the frame with the screen and avoid glare. Turn on the flash in dark rooms." },
-  { topic: "Scanning", q: "How do I scan something playing on my phone?", a: "Use Screen rec on the Scan tab: record your screen for a few seconds, then pick the recording and the best frame. Or screenshot it and choose Photo." },
+  { topic: "Scanning", q: "How do I scan something playing on my phone?", a: "Take a screenshot while it’s playing, then tap Photo on the Scan tab and choose it. Crop away captions and buttons for the best result." },
   { topic: "Scanning", q: "Can it find Reels and Shorts?", a: "Yes — for viral clips we look for the creator, the trend or meme, and the original video." },
   { topic: "Payments", q: "When is a scan used?", a: "Each scan uses one credit. If something fails on our side — like a server error — the scan is given back automatically." },
   { topic: "Payments", q: "My UPI payment is pending", a: "UPI and cash payments can take a few minutes. Your scans are added automatically once Google Play confirms the payment, even if the app is closed. Tap Restore purchases on the Me tab to check." },

@@ -89,7 +89,6 @@
           ]
         }
       ],
-      "./plugins/with-broadcast-extension.js",
       [
         "react-native-android-widget",
         {

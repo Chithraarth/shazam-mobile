@@ -25,7 +25,6 @@ export default function TabLayout() {
     QuickActions.setItems([
       { id: "camera", title: "Scan with camera", icon: icon("camera"), params: { href: "/?action=camera" } },
       { id: "photo", title: "Scan a screenshot", icon: icon("photo"), params: { href: "/?action=photo" } },
-      { id: "recording", title: "Scan a recording", icon: icon("record.circle"), params: { href: "/scan/recording-guide" } },
       { id: "history", title: "Recent scans", icon: icon("clock"), params: { href: "/history" } },
     ]).catch(() => {});
   }, []);
