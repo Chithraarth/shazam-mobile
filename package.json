@@ -68,6 +68,7 @@
     "react-native-svg": "15.12.1",
     "react-native-view-shot": "4.0.3",
     "react-native-web": "^0.21.0",
+    "videofy-broadcast": "file:modules/videofy-broadcast",
     "zod": "3.25.76",
     "zod-validation-error": "^3.4.0"
   },

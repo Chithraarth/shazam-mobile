@@ -79,7 +79,7 @@ function NoMatch({ thumb }: { thumb?: string | null }) {
       </Card>
       <View style={{ flex: 1 }} />
       <Button title="Try again" onPress={() => router.replace("/")} />
-      <TextLink title="Upload a screenshot instead" onPress={() => router.replace("/?action=photo")} />
+      <TextLink title="Scan a screen recording instead" onPress={() => router.replace("/scan/recording-guide")} />
     </Screen>
   );
 }

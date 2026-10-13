@@ -12,10 +12,10 @@ import { useIsOnline } from "@/lib/network";
 import { setPendingFrame } from "@/lib/scan-session";
 import { registerScanTrigger } from "@/lib/scan-trigger";
 import { Image } from "expo-image";
-import { BottomSheet, Button, Chip, Gradient, HeroIcon, IconButton, OfflineBanner, Sticker, Txt } from "@/ui/components";
+import { BottomSheet, Button, Chip, Gradient, HeroIcon, IconButton, OfflineBanner, Sticker, TextLink, Txt } from "@/ui/components";
 import { fonts, useHaptics, useTheme } from "@/ui/theme";
 
-type Mode = "photo" | "camera";
+type Mode = "photo" | "camera" | "recording";
 
 type Photo = { uri: string; width: number; height: number };
 
@@ -222,6 +222,7 @@ export default function ScanScreen() {
   const onMode = (m: Mode) => {
     haptics.tap();
     if (m === "photo") pickPhoto();
+    if (m === "recording") router.push("/scan/recording-guide");
   };
 
   const scansPill = (
@@ -240,7 +241,7 @@ export default function ScanScreen() {
 
   const modeSwitcher = (
     <View style={{ flexDirection: "row", justifyContent: "center", gap: 26 }}>
-      {([["photo", "PHOTO"], ["camera", "CAMERA"]] as const).map(([m, label]) => {
+      {([["photo", "PHOTO"], ["camera", "CAMERA"], ["recording", "SCREEN REC"]] as const).map(([m, label]) => {
         const on = m === "camera";
         return (
           <Pressable key={m} accessibilityRole="button" accessibilityLabel={label} onPress={() => onMode(m)} hitSlop={10} style={{ alignItems: "center", gap: 4 }}>
@@ -290,6 +291,7 @@ export default function ScanScreen() {
           {permission && !blocked ? <Button title="Allow camera" onPress={requestPermission} /> : null}
           {blocked ? <Button title="Open Settings" onPress={() => Linking.openSettings()} /> : null}
           <Button title="Upload a photo instead" variant="secondary" onPress={pickPhoto} loading={busy} />
+          <TextLink title="Scan a screen recording" onPress={() => router.push("/scan/recording-guide")} />
         </View>
       </View>
     );
