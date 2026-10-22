@@ -50,6 +50,10 @@ class ScreenScanService : Service() {
     private const val SHOT_EVERY_MS = 2_500L
     private const val MAX_FRAMES = 7
     private const val MAX_EDGE = 1024
+    // Refresh the cached screen frame at most this often.
+    private const val CACHE_EVERY_MS = 400L
+    // Give up if Start isn't tapped within this time.
+    private const val IDLE_TIMEOUT_MS = 5 * 60_000L
   }
 
   private var projection: MediaProjection? = null
@@ -63,6 +67,16 @@ class ScreenScanService : Service() {
   private var lastShot = 0L
   private var finished = false
   private var capturing = false
+  // The most recent screen frame. Android only delivers a new frame when the
+  // screen changes, so a paused video or a still title card produces none;
+  // keeping the last one means every 2.5s shot still has the current screen.
+  @Volatile private var latest: Bitmap? = null
+  private var lastCached = 0L
+  private val idleTimeout = Runnable {
+    if (!capturing && !finished) {
+      finish("Background scan stopped", "It wasn’t started within 5 minutes. No scan was used.")
+    }
+  }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -92,7 +106,11 @@ class ScreenScanService : Service() {
       p.registerCallback(object : MediaProjection.Callback() {
         // The user stopped sharing from the system UI.
         override fun onStop() {
-          handler.post { if (!finished) finishCapture() }
+          handler.post {
+            if (finished) return@post
+            // Stopped before Start was tapped: just end quietly.
+            if (capturing) finishCapture() else finish(null, null)
+          }
         }
       }, handler)
     }
@@ -106,25 +124,63 @@ class ScreenScanService : Service() {
     val scale = MAX_EDGE.toFloat() / max(metrics.widthPixels, metrics.heightPixels)
     val width = (metrics.widthPixels * scale).roundToInt()
     val height = (metrics.heightPixels * scale).roundToInt()
-    reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+    reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2).also { r ->
+      r.setOnImageAvailableListener({ cacheFrame(it) }, handler)
+    }
     display = projection?.createVirtualDisplay(
       "videofy-scan", width, height, metrics.densityDpi,
       DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader?.surface, null, handler,
     )
-    overlay = OverlayController(this, Handler(mainLooper), (CAPTURE_MS / 1000).toInt()) {
-      handler.post(::beginCapture)
-    }.also { it.showStart() }
+    overlay = OverlayController(
+      this, Handler(mainLooper),
+      onStart = { handler.post(::requestStart) },
+      onCancel = { handler.post { if (!finished) finish(null, null) } },
+    ).also { it.showReady() }
+    handler.postDelayed(idleTimeout, IDLE_TIMEOUT_MS)
     return START_NOT_STICKY
   }
 
-  // Called once the user taps the overlay's "Start scan" pill — this is the
-  // only place frame capture actually begins.
-  private fun beginCapture() {
+  // The user tapped "Start scan". Capture only begins if they're on the
+  // video, not still in Videofy.
+  private fun requestStart() {
     if (capturing || finished) return
+    if (Shared.prefs(this).getBoolean(Shared.APP_ACTIVE, false)) {
+      overlay?.hint("Open your video first")
+      return
+    }
+    beginCapture()
+  }
+
+  // The only place frame capture actually begins.
+  private fun beginCapture() {
     capturing = true
+    handler.removeCallbacks(idleTimeout)
     windowStart = System.currentTimeMillis()
-    updateOngoing("Scanning your screen…")
+    lastShot = 0L
+    overlay?.showScanning((CAPTURE_MS / 1000).toInt())
+    updateOngoing("Scanning your screen… keep the video playing")
     handler.post(::tick)
+  }
+
+  // Keeps `latest` up to date with what's on screen (throttled).
+  private fun cacheFrame(r: ImageReader) {
+    val image = runCatching { r.acquireLatestImage() }.getOrNull() ?: return
+    try {
+      val now = System.currentTimeMillis()
+      if (finished || now - lastCached < CACHE_EVERY_MS) return
+      lastCached = now
+      val plane = image.planes[0]
+      val rowPadding = plane.rowStride - plane.pixelStride * image.width
+      val padded = Bitmap.createBitmap(image.width + rowPadding / plane.pixelStride, image.height, Bitmap.Config.ARGB_8888)
+      padded.copyPixelsFromBuffer(plane.buffer)
+      val frame = if (rowPadding == 0) padded else Bitmap.createBitmap(padded, 0, 0, image.width, image.height).also { padded.recycle() }
+      val old = latest
+      latest = frame
+      old?.recycle()
+    } catch (_: Exception) {
+    } finally {
+      image.close()
+    }
   }
 
   private fun tick() {
@@ -141,22 +197,13 @@ class ScreenScanService : Service() {
   }
 
   private fun grabFrame(): ByteArray? {
-    val image = reader?.acquireLatestImage() ?: return null
+    val frame = latest ?: return null
     return try {
-      val plane = image.planes[0]
-      val rowPadding = plane.rowStride - plane.pixelStride * image.width
-      val padded = Bitmap.createBitmap(image.width + rowPadding / plane.pixelStride, image.height, Bitmap.Config.ARGB_8888)
-      padded.copyPixelsFromBuffer(plane.buffer)
-      val bitmap = Bitmap.createBitmap(padded, 0, 0, image.width, image.height)
       val out = ByteArrayOutputStream()
-      bitmap.compress(Bitmap.CompressFormat.JPEG, 70, out)
-      padded.recycle()
-      bitmap.recycle()
+      frame.compress(Bitmap.CompressFormat.JPEG, 70, out)
       out.toByteArray()
     } catch (_: Exception) {
       null
-    } finally {
-      image.close()
     }
   }
 
@@ -265,6 +312,7 @@ class ScreenScanService : Service() {
 
   private fun releaseProjection() {
     display?.release(); display = null
+    reader?.setOnImageAvailableListener(null, null)
     reader?.close(); reader = null
     projection?.stop(); projection = null
   }
@@ -272,6 +320,7 @@ class ScreenScanService : Service() {
   // Posts the answer (if any), stops capture and ends the service.
   private fun finish(title: String?, text: String?) {
     finished = true
+    if (::handler.isInitialized) handler.removeCallbacks(idleTimeout)
     releaseProjection()
     if (title != null) {
       val n = NotificationCompat.Builder(this, CHANNEL)
@@ -287,6 +336,8 @@ class ScreenScanService : Service() {
     }
     overlay?.remove()
     overlay = null
+    latest?.recycle()
+    latest = null
     ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     stopSelf()
     if (::worker.isInitialized) worker.quitSafely()

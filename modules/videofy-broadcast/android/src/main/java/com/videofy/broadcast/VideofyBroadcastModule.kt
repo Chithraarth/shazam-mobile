@@ -75,7 +75,7 @@ class VideofyBroadcastModule : Module() {
       activity.startActivityForResult(manager.createScreenCaptureIntent(), CAPTURE_REQUEST)
     }
 
-    OnActivityResult { _, payload ->
+    OnActivityResult { activity, payload ->
       if (payload.requestCode != CAPTURE_REQUEST) return@OnActivityResult
       val promise = pending ?: return@OnActivityResult
       pending = null
@@ -89,6 +89,9 @@ class VideofyBroadcastModule : Module() {
         .putExtra(ScreenScanService.EXTRA_DATA, data)
       ContextCompat.startForegroundService(context, intent)
       promise.resolve(null)
+      // Step out of the way: the user lands on their home screen with the
+      // floating Start button, ready to open the video they want to scan.
+      activity.moveTaskToBack(true)
     }
 
     // Saved results (<id>.json + <id>.jpg), returned once and deleted.
