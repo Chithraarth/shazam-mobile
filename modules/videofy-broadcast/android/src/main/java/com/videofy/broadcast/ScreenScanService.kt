@@ -33,9 +33,12 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 // Videofy background scan on Android. Started with a MediaProjection grant;
-// waits until Videofy is in the background, keeps a frame every 2.5s for
-// 15s, sends them to /api/identify, then shows the answer as a notification
-// and saves it for the app's History.
+// shows a floating "Start scan" pill over whatever app the user navigates
+// to, and only begins capturing once they tap it — so it scans the video
+// they're actually watching, not whatever happens to be on screen first.
+// Keeps a frame every 2.5s for 15s after Start is tapped, sends them to
+// /api/identify, then shows the answer as a notification and saves it for
+// the app's History.
 class ScreenScanService : Service() {
   companion object {
     const val EXTRA_RESULT_CODE = "resultCode"
@@ -47,7 +50,6 @@ class ScreenScanService : Service() {
     private const val SHOT_EVERY_MS = 2_500L
     private const val MAX_FRAMES = 7
     private const val MAX_EDGE = 1024
-    private const val WAIT_FOR_BACKGROUND_MS = 120_000L
   }
 
   private var projection: MediaProjection? = null
@@ -55,11 +57,12 @@ class ScreenScanService : Service() {
   private var reader: ImageReader? = null
   private lateinit var worker: HandlerThread
   private lateinit var handler: Handler
+  private var overlay: OverlayController? = null
   private val frames = mutableListOf<ByteArray>()
-  private var startedAt = 0L
   private var windowStart = 0L
   private var lastShot = 0L
   private var finished = false
+  private var capturing = false
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -72,7 +75,7 @@ class ScreenScanService : Service() {
     // Android 14+ requires the foreground service to be running before the
     // projection is created.
     ServiceCompat.startForeground(
-      this, ONGOING_ID, ongoingNotification("Open the video you want to identify"),
+      this, ONGOING_ID, ongoingNotification("Open the video, then tap Start scan"),
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0,
     )
     val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
@@ -97,11 +100,8 @@ class ScreenScanService : Service() {
       finish(null, null)
       return START_NOT_STICKY
     }
-    startCapture()
-    return START_NOT_STICKY
-  }
-
-  private fun startCapture() {
+    // Create the virtual display right away so capture can begin the
+    // instant the user taps Start — nothing is read from it until then.
     val metrics = resources.displayMetrics
     val scale = MAX_EDGE.toFloat() / max(metrics.widthPixels, metrics.heightPixels)
     val width = (metrics.widthPixels * scale).roundToInt()
@@ -111,27 +111,26 @@ class ScreenScanService : Service() {
       "videofy-scan", width, height, metrics.densityDpi,
       DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader?.surface, null, handler,
     )
-    startedAt = System.currentTimeMillis()
+    overlay = OverlayController(this, Handler(mainLooper), (CAPTURE_MS / 1000).toInt()) {
+      handler.post(::beginCapture)
+    }.also { it.showStart() }
+    return START_NOT_STICKY
+  }
+
+  // Called once the user taps the overlay's "Start scan" pill — this is the
+  // only place frame capture actually begins.
+  private fun beginCapture() {
+    if (capturing || finished) return
+    capturing = true
+    windowStart = System.currentTimeMillis()
+    updateOngoing("Scanning your screen…")
     handler.post(::tick)
   }
 
   private fun tick() {
-    if (finished) return
+    if (finished || !capturing) return
     val now = System.currentTimeMillis()
-    val appActive = Shared.prefs(this).getBoolean(Shared.APP_ACTIVE, false)
-    if (windowStart == 0L) {
-      if (appActive) {
-        if (now - startedAt > WAIT_FOR_BACKGROUND_MS) {
-          finish("Background scan stopped", "Open the video within 2 minutes of starting the scan. No scan was used.")
-          return
-        }
-        handler.postDelayed(::tick, 300)
-        return
-      }
-      windowStart = now
-      updateOngoing("Scanning your screen… keep the video playing")
-    }
-    if (!appActive && now - lastShot >= SHOT_EVERY_MS) {
+    if (now - lastShot >= SHOT_EVERY_MS) {
       grabFrame()?.let { frames.add(it); lastShot = now }
     }
     if (now - windowStart >= CAPTURE_MS || frames.size >= MAX_FRAMES) {
@@ -170,6 +169,7 @@ class ScreenScanService : Service() {
       return
     }
     updateOngoing("Identifying…")
+    overlay?.showIdentifying()
     Thread { upload() }.start()
   }
 
@@ -285,6 +285,8 @@ class ScreenScanService : Service() {
         .build()
       getSystemService(NotificationManager::class.java).notify(ONGOING_ID + 1 + (System.currentTimeMillis() % 1000).toInt(), n)
     }
+    overlay?.remove()
+    overlay = null
     ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     stopSelf()
     if (::worker.isInitialized) worker.quitSafely()

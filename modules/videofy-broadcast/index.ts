@@ -24,6 +24,10 @@ type NativeModule = {
   setAppActive(active: boolean): void;
   start(): Promise<void>;
   consumeResults(): string;
+  // Android only: the floating Start/countdown control needs "Display over
+  // other apps". iOS's broadcast picker has no such requirement.
+  hasOverlayPermission?(): boolean;
+  requestOverlayPermission?(): void;
 };
 
 const native = requireOptionalNativeModule<NativeModule>("VideofyBroadcast");
@@ -45,8 +49,23 @@ export function setBackgroundScanAppActive(active: boolean): void {
   native?.setAppActive(active);
 }
 
+// Android only: whether "Display over other apps" is granted, needed for
+// the floating Start/countdown control. Always true on iOS.
+export function hasBackgroundScanOverlayPermission(): boolean {
+  if (Platform.OS !== "android") return true;
+  return native?.hasOverlayPermission?.() ?? false;
+}
+
+// Android only: sends the user to the system settings screen to grant
+// "Display over other apps" — Android has no runtime dialog for this one.
+export function requestBackgroundScanOverlayPermission(): void {
+  if (Platform.OS !== "android") return;
+  native?.requestOverlayPermission?.();
+}
+
 // iOS: opens the system "Start Broadcast" sheet. Android: asks for screen
-// capture permission and starts the scan service.
+// capture permission (after the overlay permission is granted) and starts
+// the scan service.
 export async function startBackgroundScan(): Promise<void> {
   if (!native) throw new Error("Background scan isn't available in this build.");
   await native.start();

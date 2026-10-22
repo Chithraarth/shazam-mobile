@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.provider.Settings
 import android.util.Base64
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.Promise
@@ -14,6 +16,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val CAPTURE_REQUEST = 7311
+private const val OVERLAY_REQUEST = 7312
 
 class VideofyBroadcastModule : Module() {
   private var pending: Promise? = null
@@ -42,11 +45,31 @@ class VideofyBroadcastModule : Module() {
       Shared.prefs(context).edit().putBoolean(Shared.APP_ACTIVE, active).apply()
     }
 
+    // The floating Start/countdown control needs "Display over other apps".
+    // Unlike other permissions, Android requires sending the user to a
+    // dedicated system settings screen rather than a runtime dialog — there's
+    // no way to show that screen and get a direct result back, so we just
+    // check again when the app resumes (see OnActivityResult below).
+    Function("hasOverlayPermission") { Settings.canDrawOverlays(context) }
+
+    Function("requestOverlayPermission") {
+      appContext.currentActivity?.startActivityForResult(
+        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")),
+        OVERLAY_REQUEST,
+      )
+    }
+
     // Asks for screen-capture consent (Android shows its own dialog), then
-    // hands the grant to ScreenScanService.
+    // hands the grant to ScreenScanService. Requires the overlay permission
+    // to already be granted, since the service's Start/countdown control is
+    // a floating overlay.
     AsyncFunction("start") { promise: Promise ->
       val activity = appContext.currentActivity
         ?: throw CodedException("NoActivity", "Open Videofy and try again.", null)
+      if (!Settings.canDrawOverlays(context)) {
+        promise.reject(CodedException("NoOverlay", "Allow Videofy to display over other apps first.", null))
+        return@AsyncFunction
+      }
       val manager = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
       pending = promise
       activity.startActivityForResult(manager.createScreenCaptureIntent(), CAPTURE_REQUEST)
