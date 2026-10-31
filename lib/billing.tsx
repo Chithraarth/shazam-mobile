@@ -6,8 +6,8 @@ import { AppState, Platform } from "react-native";
 import { useAuth } from "@/lib/auth-context";
 import { useAuthedFetch, useProfile } from "@/hooks/useProfile";
 
-export const SCAN_PACK_SKU = process.env.EXPO_PUBLIC_SCAN_PACK_PRODUCT_ID || "scan_pack_50";
-export const SCANS_PER_PACK = 50;
+export const SCAN_PACK_SKU = process.env.EXPO_PUBLIC_SCAN_PACK_PRODUCT_ID || "scan_pack_30";
+export const SCANS_PER_PACK = 30;
 // Shown only until the store returns the real localized price.
 const FALLBACK_PRICE = "₹499";
 
