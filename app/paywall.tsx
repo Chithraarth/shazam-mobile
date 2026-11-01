@@ -97,7 +97,7 @@ export default function Paywall() {
   // price shown below (₹ in India, $ in the US, ...).
   const perScan = (() => {
     const { price, currency } = (billing.product ?? {}) as { price?: number | null; currency?: string };
-    if (!price || !currency) return Platform.OS === "web" ? null : "≈ ₹10 / scan";
+    if (!price || !currency) return Platform.OS === "web" ? null : "≈ ₹17 / scan";
     try {
       const each = new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: price / SCANS_PER_PACK < 1 ? 2 : 0 })
         .format(price / SCANS_PER_PACK);
