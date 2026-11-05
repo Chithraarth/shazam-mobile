@@ -127,12 +127,12 @@ export default function Paywall() {
         </Gradient>
 
         <View style={{ padding: 20, gap: 16, flex: 1 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <View style={{ gap: 2 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <View style={{ gap: 2, flexShrink: 1 }}>
               <Txt variant="strong">One-time pack</Txt>
               <Txt variant="caption">No subscription · never expires</Txt>
             </View>
-            <Text style={{ fontFamily: fonts.display[800], fontSize: 34, color: t.ink }}>{billing.priceText}</Text>
+            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6} style={{ fontFamily: fonts.display[800], fontSize: 34, color: t.ink, flexShrink: 0, maxWidth: "50%" }}>{billing.priceText}</Text>
           </View>
           <View style={{ gap: 10 }}>
             <Feature text="Movies, shows, episodes & Reels" />

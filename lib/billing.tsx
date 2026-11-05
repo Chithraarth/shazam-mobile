@@ -9,7 +9,14 @@ import { useAuthedFetch, useProfile } from "@/hooks/useProfile";
 export const SCAN_PACK_SKU = process.env.EXPO_PUBLIC_SCAN_PACK_PRODUCT_ID || "scan_pack_30";
 export const SCANS_PER_PACK = 30;
 // Shown only until the store returns the real localized price.
-const FALLBACK_PRICE = "₹499";
+const FALLBACK_PRICE = "₹500";
+
+// The store formats whole amounts with decimals ("₹500.00"), which is too
+// wide for the paywall's large price. Drop zero decimals; keep real ones
+// ("$4.99").
+function tidyPrice(price: string): string {
+  return price.replace(/([.,])00(?!\d)/, "");
+}
 
 type BillingContextValue = {
   available: boolean;
@@ -212,7 +219,7 @@ function NativeBillingProvider({ children }: { children: ReactNode }) {
         available: true,
         connected,
         product,
-        priceText: product?.displayPrice ?? FALLBACK_PRICE,
+        priceText: product?.displayPrice ? tidyPrice(product.displayPrice) : FALLBACK_PRICE,
         purchasing,
         restoring,
         pendingPayment,
