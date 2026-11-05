@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
 import {
   clearBackgroundScanSession,
+  consumeBackgroundScanCapture,
   consumeBackgroundScanResults,
   isBackgroundScanSupported,
   setBackgroundScanAppActive,
@@ -13,11 +14,15 @@ import { apiBase } from "@/hooks/useProfile";
 import { deviceRegion } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { useHistory } from "@/lib/history-store";
+import { setPendingFrame } from "@/lib/scan-session";
 import type { IdentifyResult } from "@/lib/scan-types";
 
 // A result this recent was most likely opened from its notification, so the
 // app goes straight to it.
 const OPEN_IF_NEWER_THAN_MS = 5 * 60 * 1000;
+// Android scan frames older than this are dropped rather than identified
+// out of the blue the next time the app opens.
+const CAPTURE_FRESH_MS = 10 * 60 * 1000;
 
 // Keeps the background scan's capture side (iOS broadcast extension /
 // Android service) in sync with the app: the signed-in session, whether
@@ -60,15 +65,30 @@ export function BackgroundScanSync() {
       }
     };
 
+    // Android: the scan service brings Videofy to the front with its frames
+    // waiting; identify them on the usual Identifying screen.
+    const identifyCapture = () => {
+      const capture = consumeBackgroundScanCapture();
+      if (!capture || Date.now() - capture.at > CAPTURE_FRESH_MS) return;
+      setPendingFrame({ uri: capture.uri, base64: capture.base64, extraFrames: capture.extraFrames, source: "screen" });
+      router.push("/identifying");
+    };
+
     setBackgroundScanAppActive(AppState.currentState === "active");
     shareSession();
-    if (loaded) importResults(false);
+    if (loaded) {
+      importResults(false);
+      identifyCapture();
+    }
 
     const sub = AppState.addEventListener("change", (state) => {
       const active = state === "active";
       setBackgroundScanAppActive(active);
       shareSession();
-      if (active && loaded) importResults(true);
+      if (active && loaded) {
+        importResults(true);
+        identifyCapture();
+      }
     });
     return () => sub.remove();
   }, [user?.uid, loaded, add, router, queryClient]);

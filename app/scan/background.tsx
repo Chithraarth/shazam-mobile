@@ -13,8 +13,9 @@ import { Button, Card, Gradient, Screen, TopBar, Txt } from "@/ui/components";
 
 // Background scan: after granting permission, Videofy shows a floating
 // "Start scan" button over whatever app you're in. Navigate to the video
-// first, then tap it — Videofy watches for 15 seconds and sends you the
-// answer as a notification.
+// first, then tap it — Videofy watches for up to 15 seconds. On Android you
+// can tap Stop sooner and Videofy then opens with the answer; on iOS the
+// answer arrives as a notification.
 export default function BackgroundScan() {
   const router = useRouter();
   const { data: profile } = useProfile();
@@ -68,7 +69,7 @@ export default function BackgroundScan() {
   const steps =
     Platform.OS === "ios"
       ? ["Tap Start, choose Videofy, then Start Broadcast", "Open the video you want to identify", "Get the answer as a notification in about 30 seconds"]
-      : ["Tap Start and allow screen capture", "Open the video and tap the floating Start scan button", "Get the answer as a notification in about 30 seconds"];
+      : ["Tap Start and allow screen capture", "Open the video and tap the floating Start scan button", "Tap Stop when you're ready (or wait 15s) — Videofy opens with the answer"];
 
   return (
     <Screen scroll>

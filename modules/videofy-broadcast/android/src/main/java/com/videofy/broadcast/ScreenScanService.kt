@@ -19,16 +19,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
-import android.util.Base64
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.UUID
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -36,9 +29,11 @@ import kotlin.math.roundToInt
 // shows a floating "Start scan" pill over whatever app the user navigates
 // to, and only begins capturing once they tap it — so it scans the video
 // they're actually watching, not whatever happens to be on screen first.
-// Keeps a frame every 2.5s for 15s after Start is tapped, sends them to
-// /api/identify, then shows the answer as a notification and saves it for
-// the app's History.
+// Keeps a frame every 2.5s for up to 15s after Start is tapped (the user can
+// tap Stop sooner), then hands the frames to the app and brings Videofy to
+// the front, where its Identifying screen sends them to /api/identify. A
+// notification is left as a fallback in case Android doesn't let the app
+// open (the app clears it when it picks the frames up).
 class ScreenScanService : Service() {
   companion object {
     const val EXTRA_RESULT_CODE = "resultCode"
@@ -46,6 +41,7 @@ class ScreenScanService : Service() {
     private const val ACTION_STOP = "com.videofy.broadcast.STOP"
     private const val CHANNEL = "background-scan"
     private const val ONGOING_ID = 4101
+    const val HANDOFF_ID = 4102
     private const val CAPTURE_MS = 15_000L
     private const val SHOT_EVERY_MS = 2_500L
     private const val MAX_FRAMES = 7
@@ -61,6 +57,7 @@ class ScreenScanService : Service() {
   private var reader: ImageReader? = null
   private lateinit var worker: HandlerThread
   private lateinit var handler: Handler
+  private val mainHandler by lazy { Handler(mainLooper) }
   private var overlay: OverlayController? = null
   private val frames = mutableListOf<ByteArray>()
   private var windowStart = 0L
@@ -82,7 +79,8 @@ class ScreenScanService : Service() {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (intent?.action == ACTION_STOP) {
-      finish(null, null)
+      // Stop from the notification: mid-scan it behaves like the Stop chip.
+      if (capturing && !finished) handler.post(::requestStop) else if (!finished) finish(null, null)
       return START_NOT_STICKY
     }
     createChannel()
@@ -132,9 +130,10 @@ class ScreenScanService : Service() {
       DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader?.surface, null, handler,
     )
     overlay = OverlayController(
-      this, Handler(mainLooper),
+      this, mainHandler,
       onStart = { handler.post(::requestStart) },
       onCancel = { handler.post { if (!finished) finish(null, null) } },
+      onStop = { handler.post(::requestStop) },
     ).also { it.showReady() }
     handler.postDelayed(idleTimeout, IDLE_TIMEOUT_MS)
     return START_NOT_STICKY
@@ -158,8 +157,15 @@ class ScreenScanService : Service() {
     windowStart = System.currentTimeMillis()
     lastShot = 0L
     overlay?.showScanning((CAPTURE_MS / 1000).toInt())
-    updateOngoing("Scanning your screen… keep the video playing")
+    updateOngoing("Scanning your screen… tap Stop when you're done")
     handler.post(::tick)
+  }
+
+  // The user tapped Stop on the scanning chip: end now with what we have.
+  private fun requestStop() {
+    if (!capturing || finished) return
+    if (frames.isEmpty()) grabFrame()?.let { frames.add(it) }
+    finishCapture()
   }
 
   // Keeps `latest` up to date with what's on screen (throttled).
@@ -215,69 +221,32 @@ class ScreenScanService : Service() {
       finish("Nothing was captured", "Play the video and try again. No scan was used.")
       return
     }
-    updateOngoing("Identifying…")
-    overlay?.showIdentifying()
-    Thread { upload() }.start()
-  }
-
-  private fun upload() {
-    val prefs = Shared.prefs(this)
-    val token = prefs.getString(Shared.TOKEN, null)
-    val base = prefs.getString(Shared.API_BASE, null)
-    if (token.isNullOrEmpty() || base.isNullOrEmpty()) {
-      finish("Sign in again", "Open Videofy to sign in, then scan again.")
-      return
-    }
-    val body = JSONObject()
-      .put("imageData", Base64.encodeToString(frames[0], Base64.NO_WRAP))
-      .put("extraFrames", JSONArray(frames.drop(1).map { Base64.encodeToString(it, Base64.NO_WRAP) }))
-      .put("mimeType", "image/jpeg")
-      .put("region", prefs.getString(Shared.REGION, "IN"))
-      .put("source", "screen")
-    try {
-      val conn = (URL("$base/api/identify").openConnection() as HttpURLConnection).apply {
-        requestMethod = "POST"
-        connectTimeout = 15_000
-        readTimeout = 60_000
-        doOutput = true
-        setRequestProperty("Content-Type", "application/json")
-        setRequestProperty("Authorization", "Bearer $token")
-      }
-      conn.outputStream.use { it.write(body.toString().toByteArray()) }
-      val status = conn.responseCode
-      when (status) {
-        200 -> {
-          val result = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-          save(result)
-          val (title, text) = describe(result)
-          finish(title, text)
-        }
-        401 -> finish("Sign in again", "Open Videofy to sign in, then scan again.")
-        402 -> finish("You’re out of scans", "Open Videofy to get more scans.")
-        else -> finish("Couldn’t identify that", "Your scan wasn’t used — please try again.")
-      }
-      conn.disconnect()
-    } catch (_: Exception) {
-      finish("Couldn’t reach Videofy", "Check your connection and try again. No scan was used.")
-    }
-  }
-
-  private fun describe(r: JSONObject): Pair<String, String> {
-    if (!r.optBoolean("found")) return "No match this time" to "Try again while a title, face or caption is on screen."
-    val name = r.optString("title").ifEmpty { r.optString("creator") }.ifEmpty { "Found it" }
-    val parts = listOfNotNull(
-      r.optInt("year", 0).takeIf { it > 0 }?.toString(),
-      r.optString("platform").takeIf { it.isNotEmpty() && it != "null" }?.let { "on $it" },
-      r.optInt("confidence", -1).takeIf { it >= 0 }?.let { "$it% match" },
+    Shared.savePending(this, frames)
+    // Fallback: if Android doesn't let Videofy come to the front, this
+    // opens it and the app picks the frames up then.
+    getSystemService(NotificationManager::class.java).notify(
+      HANDOFF_ID,
+      NotificationCompat.Builder(this, CHANNEL)
+        .setSmallIcon(applicationInfo.icon)
+        .setContentTitle("Scan captured")
+        .setContentText("Tap to see what you're watching.")
+        .setAutoCancel(true)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setContentIntent(openAppIntent())
+        .build(),
     )
-    return "Found it: $name" to (if (parts.isEmpty()) "Tap to see the details." else parts.joinToString(" · "))
-  }
-
-  private fun save(result: JSONObject) {
-    val dir = Shared.resultsDir(this)
-    val id = UUID.randomUUID().toString()
-    File(dir, "$id.json").writeText(JSONObject().put("id", id).put("at", System.currentTimeMillis()).put("result", result).toString())
-    File(dir, "$id.jpg").writeBytes(frames[0])
+    // Open Videofy while the overlay is still on screen: Android 15+ only
+    // lets "display over other apps" holders start an activity from the
+    // background while one of their overlay windows is visible.
+    overlay?.showOpening()
+    mainHandler.post {
+      runCatching {
+        packageManager.getLaunchIntentForPackage(packageName)?.let {
+          startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+        }
+      }
+      mainHandler.postDelayed({ finish(null, null) }, 600)
+    }
   }
 
   private fun createChannel() {

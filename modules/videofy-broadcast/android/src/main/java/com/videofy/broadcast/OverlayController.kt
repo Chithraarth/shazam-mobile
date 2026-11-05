@@ -19,14 +19,16 @@ import kotlin.math.abs
 // background scan. Two looks:
 //  - Ready: a large Videofy pill "Start scan" with a close (x) button,
 //    centred near the top so it's easy to find.
-//  - Scanning: a small "● 12s" chip docked to the right edge, so it covers
-//    as little of the video being captured as possible.
+//  - Scanning: a small "■ Stop · 12s" chip docked to the right edge, so it
+//    covers as little of the video being captured as possible. Tapping it
+//    ends the scan early.
 // Draggable in both. Needs "Display over other apps" (checked by callers).
 internal class OverlayController(
   private val context: Context,
   private val mainHandler: Handler,
   private val onStart: () -> Unit,
   private val onCancel: () -> Unit,
+  private val onStop: () -> Unit,
 ) {
   private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
   private val density = context.resources.displayMetrics.density
@@ -57,13 +59,16 @@ internal class OverlayController(
 
   fun showScanning(seconds: Int) = mainHandler.post {
     stopTicker()
-    attach(buildPill(compact = true, text = "${seconds}s", withClose = false), compact = true)
+    val chip = buildPill(compact = true, text = "Stop · ${seconds}s", withClose = false, stopMark = true)
+    chip.contentDescription = "Stop scan"
+    chip.setOnClickListener { onStop() }
+    attach(chip, compact = true)
     var remaining = seconds
     val t = object : Runnable {
       override fun run() {
         remaining--
         if (view == null || remaining <= 0) return
-        label?.text = "${remaining}s"
+        label?.text = "Stop · ${remaining}s"
         mainHandler.postDelayed(this, 1000)
       }
     }
@@ -71,9 +76,10 @@ internal class OverlayController(
     mainHandler.postDelayed(t, 1000)
   }
 
-  fun showIdentifying() = mainHandler.post {
+  fun showOpening() = mainHandler.post {
     stopTicker()
-    label?.text = "Identifying…"
+    view?.setOnClickListener(null)
+    label?.text = "Opening Videofy…"
   }
 
   fun remove() = mainHandler.post {
@@ -88,7 +94,7 @@ internal class OverlayController(
     ticker = null
   }
 
-  private fun buildPill(compact: Boolean, text: String, withClose: Boolean): View {
+  private fun buildPill(compact: Boolean, text: String, withClose: Boolean, stopMark: Boolean = false): View {
     val row = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
@@ -100,9 +106,13 @@ internal class OverlayController(
       ).apply { cornerRadius = dp(28).toFloat() }
       elevation = dp(8).toFloat()
     }
-    // Lime dot: the Videofy mark, and a "live" indicator while scanning.
+    // Lime dot: the Videofy mark. While scanning it's a lime square, the
+    // usual "stop" symbol, since tapping the chip stops the scan.
     row.addView(View(context).apply {
-      background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor("#C6FF3D")) }
+      background = GradientDrawable().apply {
+        if (stopMark) cornerRadius = dp(2).toFloat() else shape = GradientDrawable.OVAL
+        setColor(Color.parseColor("#C6FF3D"))
+      }
       layoutParams = LinearLayout.LayoutParams(dp(10), dp(10)).apply { marginEnd = dp(10) }
     })
     val tv = TextView(context).apply {
@@ -125,7 +135,7 @@ internal class OverlayController(
         setOnClickListener { onCancel() }
       })
     }
-    row.contentDescription = if (withClose) "Start Videofy scan" else null
+    if (withClose) row.contentDescription = "Start Videofy scan"
     return row
   }
 

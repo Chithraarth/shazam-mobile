@@ -94,6 +94,32 @@ class VideofyBroadcastModule : Module() {
       activity.moveTaskToBack(true)
     }
 
+    // Frames from a finished scan, returned once and deleted, as
+    // {at, uri, base64, extraFrames} — or "" when there are none. The first
+    // frame is also copied to the cache so the Identifying screen can show it.
+    Function("consumePendingScan") {
+      val dir = Shared.pendingDir(context)
+      val frames = (dir.listFiles { f -> f.name.startsWith("frame") && f.extension == "jpg" } ?: emptyArray())
+        .sortedBy { it.nameWithoutExtension.removePrefix("frame").toIntOrNull() ?: 0 }
+      val at = runCatching { java.io.File(dir, "at").readText().trim().toLong() }.getOrDefault(0L)
+      try {
+        if (frames.isEmpty()) return@Function ""
+        val preview = java.io.File(context.cacheDir, "background-scan-$at.jpg")
+        frames[0].copyTo(preview, overwrite = true)
+        val encoded = frames.map { Base64.encodeToString(it.readBytes(), Base64.NO_WRAP) }
+        JSONObject()
+          .put("at", at)
+          .put("uri", Uri.fromFile(preview).toString())
+          .put("base64", encoded[0])
+          .put("extraFrames", JSONArray(encoded.drop(1)))
+          .toString()
+      } finally {
+        dir.deleteRecursively()
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager)
+          .cancel(ScreenScanService.HANDOFF_ID)
+      }
+    }
+
     // Saved results (<id>.json + <id>.jpg), returned once and deleted.
     Function("consumeResults") {
       val out = JSONArray()
